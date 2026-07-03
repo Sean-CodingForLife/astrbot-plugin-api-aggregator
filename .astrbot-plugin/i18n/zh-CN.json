@@ -28,6 +28,10 @@
     "preview_max_chars": {
       "description": "聚合摘要消息中响应预览的最大字符数。",
       "hint": "默认 1200，范围 1-10000。只影响摘要展示，不改变实际读取上限。"
+    },
+    "proxy_url": {
+      "description": "上游 API 请求代理地址。",
+      "hint": "留空表示不使用代理。支持 http://、https://，未写协议时按 http:// 处理。该代理只用于本插件调用上游 API。"
     }
   },
   "pages": {

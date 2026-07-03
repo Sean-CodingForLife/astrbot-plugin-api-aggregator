@@ -3,8 +3,16 @@
     "description": "语言模式。",
     "type": "string",
     "hint": "auto 会让插件页按 AstrBot WebUI 当前语言显示；后端触发器回复在 auto 下保持英文。可选：auto、zh-CN、en-US。",
-    "options": ["auto", "zh-CN", "en-US"],
-    "labels": ["Auto", "中文", "English"],
+    "options": [
+      "auto",
+      "zh-CN",
+      "en-US"
+    ],
+    "labels": [
+      "Auto",
+      "中文",
+      "English"
+    ],
     "default": "auto"
   },
   "default_timeout_seconds": {
@@ -30,5 +38,11 @@
     "type": "int",
     "hint": "默认 1200，范围 1-10000。只影响摘要展示，不改变实际读取上限。",
     "default": 1200
+  },
+  "proxy_url": {
+    "description": "上游 API 请求代理地址。",
+    "type": "string",
+    "hint": "留空表示不使用代理。支持 http://、https://，未写协议时按 http:// 处理。该代理只用于本插件调用上游 API。",
+    "default": ""
   }
 }

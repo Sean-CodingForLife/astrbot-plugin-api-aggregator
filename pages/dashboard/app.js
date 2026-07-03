@@ -481,7 +481,6 @@ function renderSummary() {
   $("apiCount").textContent = String(state.apis.length);
   $("enabledCount").textContent = String(enabledCount);
   $("okCount").textContent = String(state.apis.filter((api) => api.last_ok).length);
-  $("sidebarEnabledCount").textContent = `${enabledCount} / ${state.apis.length}`;
   $("strategyMetric").textContent = state.settings?.strategy || "first-ok";
 }
 
@@ -861,6 +860,8 @@ function setView(view) {
   document.querySelectorAll("[data-view-target]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.viewTarget === view);
   });
+  $("aggregatorPanel").classList.toggle("is-hidden", view !== "apis");
+  document.querySelector(".content-grid")?.classList.toggle("is-wide", view !== "apis");
 }
 
 $("refreshBtn").addEventListener("click", () => refresh().catch((error) => log("Refresh failed", { message: error.message })));

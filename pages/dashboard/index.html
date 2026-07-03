@@ -8,16 +8,33 @@
 </head>
 <body>
   <main class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"></path><path d="M4 12h3M17 12h3M12 4v3M12 17v3"></path></svg>
+    <section class="workspace">
+      <header class="topbar">
+        <div class="topbar-title">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"></path><path d="M4 12h3M17 12h3M12 4v3M12 17v3"></path></svg>
+          </div>
+          <div>
+          <p class="breadcrumb">Dashboard / API Aggregator</p>
+          <h2 data-i18n-key="title">API operations console</h2>
+          </div>
         </div>
-        <div>
-          <h1>API Aggregator</h1>
-          <p data-i18n-key="appSubtitle">AstrBot plugin</p>
+        <div class="topbar-actions">
+          <label class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3"></path><circle cx="11" cy="11" r="7"></circle></svg>
+            <input id="searchInput" type="search" placeholder="Search name or URL">
+          </label>
+          <div class="language-switch" role="group" aria-label="Language">
+            <button type="button" data-language-mode="zh-CN">中文</button>
+            <button type="button" data-language-mode="en-US">EN</button>
+          </div>
+          <button id="refreshBtn" class="icon-btn" type="button" title="Refresh" aria-label="Refresh">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.7 9.7 0 0 1-6.7-2.7"></path><path d="M3 12a9 9 0 0 1 9-9 9.7 9.7 0 0 1 6.7 2.7"></path><path d="M3 18v-5h5"></path><path d="M21 6v5h-5"></path></svg>
+          </button>
+          <button id="testAllBtn" class="secondary" type="button">Test Enabled</button>
+          <button id="addApiBtn" class="primary" type="button">Add API</button>
         </div>
-      </div>
+      </header>
 
       <nav class="nav-list" aria-label="Dashboard navigation">
         <button class="nav-item is-active" type="button" data-view-target="apis">
@@ -37,36 +54,6 @@
           <span data-i18n-key="import">Import</span>
         </button>
       </nav>
-
-      <div class="sidebar-card">
-        <span class="eyebrow" data-i18n-key="status">Status</span>
-        <strong id="sidebarEnabledCount">0</strong>
-        <p data-i18n-key="appSubtitle">Manage API entries, groups, enable state, tests, import, and export.</p>
-      </div>
-    </aside>
-
-    <section class="workspace">
-      <header class="topbar">
-        <div>
-          <p class="breadcrumb">Dashboard / API Aggregator</p>
-          <h2 data-i18n-key="title">API operations console</h2>
-        </div>
-        <div class="topbar-actions">
-          <label class="search">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3"></path><circle cx="11" cy="11" r="7"></circle></svg>
-            <input id="searchInput" type="search" placeholder="Search name or URL">
-          </label>
-          <div class="language-switch" role="group" aria-label="Language">
-            <button type="button" data-language-mode="zh-CN">中文</button>
-            <button type="button" data-language-mode="en-US">EN</button>
-          </div>
-          <button id="refreshBtn" class="icon-btn" type="button" title="Refresh" aria-label="Refresh">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.7 9.7 0 0 1-6.7-2.7"></path><path d="M3 12a9 9 0 0 1 9-9 9.7 9.7 0 0 1 6.7 2.7"></path><path d="M3 18v-5h5"></path><path d="M21 6v5h-5"></path></svg>
-          </button>
-          <button id="testAllBtn" class="secondary" type="button">Test Enabled</button>
-          <button id="addApiBtn" class="primary" type="button">Add API</button>
-        </div>
-      </header>
 
       <section class="metric-strip" aria-label="API metrics">
         <article class="metric">
@@ -102,7 +89,7 @@
           <div id="apiList" class="api-table"></div>
         </section>
 
-        <aside class="detail-panel">
+        <aside id="aggregatorPanel" class="detail-panel">
           <div class="detail-head">
             <span class="status-dot ok"></span>
             <div>

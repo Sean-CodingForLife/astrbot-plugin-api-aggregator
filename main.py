@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from pydantic import Field as PydanticField
 from pydantic.dataclasses import dataclass as pydantic_dataclass
@@ -43,6 +43,7 @@ DEFAULT_TEST_LOG_LIMIT = 100
 MAX_TEST_LOG_LIMIT = 1000
 DEFAULT_PREVIEW_MAX_CHARS = 1200
 MAX_PREVIEW_MAX_CHARS = 10000
+SUPPORTED_PROXY_SCHEMES = {"http", "https"}
 
 
 @dataclass
@@ -396,6 +397,28 @@ def build_request(api: dict[str, Any]) -> Request:
     return Request(url, data=data, headers=headers, method=method)
 
 
+def normalize_proxy_url(value: Any) -> str:
+    proxy_url = str(value or "").strip()
+    if not proxy_url:
+        return ""
+    lowered = proxy_url.lower()
+    if "://" not in lowered:
+        proxy_url = f"http://{proxy_url}"
+        lowered = proxy_url.lower()
+    scheme = lowered.split("://", 1)[0]
+    if scheme not in SUPPORTED_PROXY_SCHEMES:
+        return ""
+    return proxy_url
+
+
+def open_request(req: Request, *, timeout: int, proxy_url: str = ""):
+    proxy_url = normalize_proxy_url(proxy_url)
+    if not proxy_url:
+        return urlopen(req, timeout=timeout)
+    proxies = {"http": proxy_url, "https": proxy_url}
+    return build_opener(ProxyHandler(proxies)).open(req, timeout=timeout)
+
+
 def _cooldown_remaining_ms(api: dict[str, Any]) -> int:
     cooldown_until = max(0, int(api.get("cooldown_until") or 0))
     return max(0, cooldown_until - now_ms())
@@ -531,6 +554,7 @@ async def execute_api_request(
     *,
     ignore_cooldown: bool = False,
     response_read_limit_bytes: int = DEFAULT_RESPONSE_READ_LIMIT_BYTES,
+    proxy_url: str = "",
 ) -> dict[str, Any]:
     cooldown_remaining_ms = _cooldown_remaining_ms(api)
     if cooldown_remaining_ms > 0 and not ignore_cooldown:
@@ -570,7 +594,7 @@ async def execute_api_request(
 
     def run_once() -> dict[str, Any]:
         req = build_request(api)
-        with urlopen(req, timeout=timeout_seconds) as response:
+        with open_request(req, timeout=timeout_seconds, proxy_url=proxy_url) as response:
             raw = response.read(read_limit)
             content_type = str(response.headers.get("Content-Type", "") or "")
             payload = build_response_payload(content_type, raw)
@@ -1068,6 +1092,7 @@ class ApiAggregatorPlugin(Star):
             1,
             MAX_PREVIEW_MAX_CHARS,
         )
+        self.proxy_url = normalize_proxy_url(self.config.get("proxy_url"))
         self.root = Path(__file__).resolve().parent
         self.store = ApiAggregatorStore(Path(get_astrbot_plugin_data_path()) / PLUGIN_NAME)
         self._registered = False
@@ -1116,6 +1141,7 @@ class ApiAggregatorPlugin(Star):
                     "response_read_limit_bytes": self.response_read_limit_bytes,
                     "test_log_limit": self.test_log_limit,
                     "preview_max_chars": self.preview_max_chars,
+                    "proxy_enabled": bool(self.proxy_url),
                 },
                 **data,
             }
@@ -1298,6 +1324,7 @@ class ApiAggregatorPlugin(Star):
             api,
             ignore_cooldown=True,
             response_read_limit_bytes=self.response_read_limit_bytes,
+            proxy_url=self.proxy_url,
         )
 
         def mutate(next_data):
@@ -1315,6 +1342,7 @@ class ApiAggregatorPlugin(Star):
                 api,
                 ignore_cooldown=True,
                 response_read_limit_bytes=self.response_read_limit_bytes,
+                proxy_url=self.proxy_url,
             )
             for api in apis
         ]
@@ -1364,6 +1392,7 @@ class ApiAggregatorPlugin(Star):
             result = await execute_api_request(
                 api,
                 response_read_limit_bytes=self.response_read_limit_bytes,
+                proxy_url=self.proxy_url,
             )
             results.append(result)
             if result.get("ok"):
@@ -1532,6 +1561,7 @@ class ApiAggregatorPlugin(Star):
             api,
             ignore_cooldown=True,
             response_read_limit_bytes=self.response_read_limit_bytes,
+            proxy_url=self.proxy_url,
         )
 
         def mutate(next_data):

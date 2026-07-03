@@ -28,6 +28,10 @@
     "preview_max_chars": {
       "description": "Maximum response preview characters in aggregate summary messages.",
       "hint": "Default 1200, range 1-10000. This only affects summary display and does not change the response read limit."
+    },
+    "proxy_url": {
+      "description": "Upstream API request proxy URL.",
+      "hint": "Leave empty to disable proxy. Supports http:// and https://. If the scheme is omitted, http:// is used. The proxy only applies to upstream API calls made by this plugin."
     }
   },
   "pages": {
