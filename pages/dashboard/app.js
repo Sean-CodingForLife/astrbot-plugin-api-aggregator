@@ -63,22 +63,6 @@ const I18N = {
     method: "Method",
     queryJson: "Query JSON",
     headersJson: "Headers JSON",
-    authSettings: "Auth Settings",
-    authType: "Auth Type",
-    authNone: "None",
-    authBearer: "Bearer Token",
-    authApiKey: "API Key",
-    authBasic: "Basic Auth",
-    authCookie: "Cookie",
-    bearerToken: "Bearer Token",
-    apiKeyName: "API Key Name",
-    apiKeyValue: "API Key Value",
-    apiKeyLocation: "API Key Location",
-    apiKeyHeader: "Header",
-    apiKeyQuery: "Query",
-    basicUsername: "Basic Username",
-    basicPassword: "Basic Password",
-    cookie: "Cookie",
     body: "Body",
     timeoutSeconds: "Timeout Seconds",
     retryCount: "Retry Count",
@@ -311,21 +295,6 @@ function applyTranslations() {
   setLabelText("apiMethod", "method");
   setLabelText("apiQuery", "queryJson");
   setLabelText("apiHeaders", "headersJson");
-  setLabelText("apiAuthType", "authType");
-  setOptionText("apiAuthType", "none", "authNone");
-  setOptionText("apiAuthType", "bearer", "authBearer");
-  setOptionText("apiAuthType", "api-key", "authApiKey");
-  setOptionText("apiAuthType", "basic", "authBasic");
-  setOptionText("apiAuthType", "cookie", "authCookie");
-  setLabelText("apiBearerToken", "bearerToken");
-  setLabelText("apiKeyName", "apiKeyName");
-  setLabelText("apiKeyValue", "apiKeyValue");
-  setLabelText("apiKeyLocation", "apiKeyLocation");
-  setOptionText("apiKeyLocation", "header", "apiKeyHeader");
-  setOptionText("apiKeyLocation", "query", "apiKeyQuery");
-  setLabelText("apiBasicUsername", "basicUsername");
-  setLabelText("apiBasicPassword", "basicPassword");
-  setLabelText("apiCookie", "cookie");
   setLabelText("apiBody", "body");
   setLabelText("apiTimeoutSeconds", "timeoutSeconds");
   setLabelText("apiRetryCount", "retryCount");
@@ -674,55 +643,8 @@ function parseJsonInput(id) {
   }
 }
 
-function defaultAuth(auth = {}) {
-  return {
-    type: auth?.type || "none",
-    bearer_token: auth?.bearer_token || "",
-    api_key_name: auth?.api_key_name || "X-API-Key",
-    api_key_value: auth?.api_key_value || "",
-    api_key_location: auth?.api_key_location || "header",
-    basic_username: auth?.basic_username || "",
-    basic_password: auth?.basic_password || "",
-    cookie: auth?.cookie || "",
-  };
-}
-
-function updateAuthPanels() {
-  const selectedType = $("apiAuthType").value || "none";
-  document.querySelectorAll("[data-auth-panel]").forEach((panel) => {
-    panel.hidden = panel.dataset.authPanel !== selectedType;
-  });
-}
-
-function readAuthForm() {
-  const auth = {
-    type: $("apiAuthType").value || "none",
-    bearer_token: "",
-    api_key_name: "X-API-Key",
-    api_key_value: "",
-    api_key_location: "header",
-    basic_username: "",
-    basic_password: "",
-    cookie: "",
-  };
-  if (auth.type === "bearer") {
-    auth.bearer_token = $("apiBearerToken").value;
-  } else if (auth.type === "api-key") {
-    auth.api_key_name = $("apiKeyName").value || "X-API-Key";
-    auth.api_key_value = $("apiKeyValue").value;
-    auth.api_key_location = $("apiKeyLocation").value || "header";
-  } else if (auth.type === "basic") {
-    auth.basic_username = $("apiBasicUsername").value;
-    auth.basic_password = $("apiBasicPassword").value;
-  } else if (auth.type === "cookie") {
-    auth.cookie = $("apiCookie").value;
-  }
-  return auth;
-}
-
 function openApiDialog(api = null) {
   const defaultTimeoutSeconds = Number.parseInt(state.runtime_config?.default_timeout_seconds ?? 12, 10) || 12;
-  const auth = defaultAuth(api?.auth);
   $("apiDialogTitle").textContent = api ? `${t("edit")} API` : t("addApi");
   $("apiId").value = api?.id || "";
   $("apiName").value = api?.name || "";
@@ -732,15 +654,6 @@ function openApiDialog(api = null) {
   $("apiMethod").value = api?.method || "GET";
   $("apiQuery").value = JSON.stringify(api?.query || {}, null, 2);
   $("apiHeaders").value = JSON.stringify(api?.headers || {}, null, 2);
-  $("apiAuthType").value = auth.type;
-  $("apiBearerToken").value = auth.bearer_token;
-  $("apiKeyName").value = auth.api_key_name;
-  $("apiKeyValue").value = auth.api_key_value;
-  $("apiKeyLocation").value = auth.api_key_location;
-  $("apiBasicUsername").value = auth.basic_username;
-  $("apiBasicPassword").value = auth.basic_password;
-  $("apiCookie").value = auth.cookie;
-  updateAuthPanels();
   $("apiBody").value = api?.body || "";
   $("apiTimeoutSeconds").value = String(api?.timeout_seconds ?? defaultTimeoutSeconds);
   $("apiRetryCount").value = String(api?.retry_count ?? 0);
@@ -790,7 +703,6 @@ async function saveApi(event) {
     method: $("apiMethod").value,
     query: parseJsonInput("apiQuery"),
     headers: parseJsonInput("apiHeaders"),
-    auth: readAuthForm(),
     body: $("apiBody").value,
     timeout_seconds: parseNumberInput("apiTimeoutSeconds", defaultTimeoutSeconds, 1, 120),
     retry_count: parseNumberInput("apiRetryCount", 0, 0, 5),
@@ -959,7 +871,6 @@ $("cancelApiBtn").addEventListener("click", () => $("apiDialog").close());
 $("cancelGroupBtn").addEventListener("click", () => $("groupDialog").close());
 $("cancelTriggerBtn").addEventListener("click", () => $("triggerDialog").close());
 $("apiForm").addEventListener("submit", (event) => saveApi(event).catch((error) => log("Save API failed", { message: error.message })));
-$("apiAuthType").addEventListener("change", updateAuthPanels);
 $("groupForm").addEventListener("submit", (event) => saveGroup(event).catch((error) => log("Save group failed", { message: error.message })));
 $("triggerForm").addEventListener("submit", (event) => saveTrigger(event).catch((error) => log("Save trigger failed", { message: error.message })));
 $("previewResponsePathBtn").addEventListener("click", () => previewTriggerResponsePath().catch((error) => {

@@ -2,11 +2,6 @@
 
 ## Unreleased
 
-### 新增
-
-- 为单个 API 增加认证配置，支持 Bearer Token、API Key、Basic Auth 和 Cookie，并在请求时自动合并到请求头或查询参数。
-- 在插件仪表盘新增认证设置表单，保留 Headers JSON 作为高级自定义入口。
-
 ### 修复
 
 - 修复上游返回错误 `Content-Type` 时 JSON 文本被识别为普通文本的问题；现在文本响应内容以 `{` 或 `[` 开头且可成功解析为 JSON 时，会按 JSON 响应处理，以便 `response_path` 正常提取。

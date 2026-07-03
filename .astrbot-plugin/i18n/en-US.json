@@ -130,23 +130,7 @@
       "importMergeDescription": "Merge imported groups, APIs, and triggers into the current data by id.",
       "importValidateTitle": "Validate",
       "importValidateDescription": "Check the JSON payload without changing current data.",
-      "importOutputEmpty": "No import or export action yet.",
-      "authSettings": "Auth Settings",
-      "authType": "Auth Type",
-      "authNone": "None",
-      "authBearer": "Bearer Token",
-      "authApiKey": "API Key",
-      "authBasic": "Basic Auth",
-      "authCookie": "Cookie",
-      "bearerToken": "Bearer Token",
-      "apiKeyName": "API Key Name",
-      "apiKeyValue": "API Key Value",
-      "apiKeyLocation": "API Key Location",
-      "apiKeyHeader": "Header",
-      "apiKeyQuery": "Query",
-      "basicUsername": "Basic Username",
-      "basicPassword": "Basic Password",
-      "cookie": "Cookie"
+      "importOutputEmpty": "No import or export action yet."
     }
   }
 }
