@@ -1,0 +1,8 @@
+{
+  "response_read_limit_bytes": {
+    "description": "上游 API 响应读取上限（字节）。提高后可解析更大的 JSON 响应，但会增加内存、日志和 WebUI 预览压力。",
+    "type": "int",
+    "hint": "默认 4096，范围 1-1048576",
+    "default": 4096
+  }
+}

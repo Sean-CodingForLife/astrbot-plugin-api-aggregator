@@ -35,6 +35,8 @@ DEFAULT_TIMEOUT_SECONDS = 12
 MAX_TIMEOUT_SECONDS = 120
 MAX_RETRY_COUNT = 5
 MAX_COOLDOWN_SECONDS = 3600
+DEFAULT_RESPONSE_READ_LIMIT_BYTES = 4096
+MAX_RESPONSE_READ_LIMIT_BYTES = 1048576
 
 
 @dataclass
@@ -487,7 +489,12 @@ def build_response_payload(content_type: str, raw: bytes) -> dict[str, Any]:
     }
 
 
-async def execute_api_request(api: dict[str, Any], *, ignore_cooldown: bool = False) -> dict[str, Any]:
+async def execute_api_request(
+    api: dict[str, Any],
+    *,
+    ignore_cooldown: bool = False,
+    response_read_limit_bytes: int = DEFAULT_RESPONSE_READ_LIMIT_BYTES,
+) -> dict[str, Any]:
     cooldown_remaining_ms = _cooldown_remaining_ms(api)
     if cooldown_remaining_ms > 0 and not ignore_cooldown:
         return {
@@ -516,12 +523,18 @@ async def execute_api_request(api: dict[str, Any], *, ignore_cooldown: bool = Fa
         MAX_TIMEOUT_SECONDS,
     )
     retry_count = clamp_int(api.get("retry_count"), 0, 0, MAX_RETRY_COUNT)
+    read_limit = clamp_int(
+        response_read_limit_bytes,
+        DEFAULT_RESPONSE_READ_LIMIT_BYTES,
+        1,
+        MAX_RESPONSE_READ_LIMIT_BYTES,
+    )
     attempts: list[dict[str, Any]] = []
 
     def run_once() -> dict[str, Any]:
         req = build_request(api)
         with urlopen(req, timeout=timeout_seconds) as response:
-            raw = response.read(4096)
+            raw = response.read(read_limit)
             content_type = str(response.headers.get("Content-Type", "") or "")
             payload = build_response_payload(content_type, raw)
             return {
@@ -951,6 +964,12 @@ class ApiAggregatorPlugin(Star):
         super().__init__(context)
         self.context = context
         self.config = config or {}
+        self.response_read_limit_bytes = clamp_int(
+            self.config.get("response_read_limit_bytes"),
+            DEFAULT_RESPONSE_READ_LIMIT_BYTES,
+            1,
+            MAX_RESPONSE_READ_LIMIT_BYTES,
+        )
         self.root = Path(__file__).resolve().parent
         self.store = ApiAggregatorStore(Path(get_astrbot_plugin_data_path()) / PLUGIN_NAME)
         self._registered = False
@@ -1160,7 +1179,11 @@ class ApiAggregatorPlugin(Star):
         api = next((item for item in data["apis"] if item["id"] == api_id), None)
         if not api:
             return fail("api not found", 404)
-        result = await execute_api_request(api, ignore_cooldown=True)
+        result = await execute_api_request(
+            api,
+            ignore_cooldown=True,
+            response_read_limit_bytes=self.response_read_limit_bytes,
+        )
 
         def mutate(next_data):
             record_test_result(next_data, result)
@@ -1172,7 +1195,14 @@ class ApiAggregatorPlugin(Star):
     async def api_test_all(self):
         data = await self.store.read()
         apis = [api for api in data["apis"] if api.get("enabled")]
-        results = [await execute_api_request(api, ignore_cooldown=True) for api in apis]
+        results = [
+            await execute_api_request(
+                api,
+                ignore_cooldown=True,
+                response_read_limit_bytes=self.response_read_limit_bytes,
+            )
+            for api in apis
+        ]
 
         def mutate(next_data):
             result_by_id = {item["api_id"]: item for item in results}
@@ -1216,7 +1246,10 @@ class ApiAggregatorPlugin(Star):
         selected: dict[str, Any] | None = None
         failure_reason = ""
         for api in candidates:
-            result = await execute_api_request(api)
+            result = await execute_api_request(
+                api,
+                response_read_limit_bytes=self.response_read_limit_bytes,
+            )
             results.append(result)
             if result.get("ok"):
                 selected = result
@@ -1380,7 +1413,11 @@ class ApiAggregatorPlugin(Star):
         api = next((item for item in data["apis"] if item["id"] == api_id), None)
         if not api:
             return fail("api not found", 404)
-        result = await execute_api_request(api, ignore_cooldown=True)
+        result = await execute_api_request(
+            api,
+            ignore_cooldown=True,
+            response_read_limit_bytes=self.response_read_limit_bytes,
+        )
 
         def mutate(next_data):
             record_test_result(next_data, result)

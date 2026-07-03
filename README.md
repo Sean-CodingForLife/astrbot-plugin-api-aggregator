@@ -8,6 +8,7 @@ API Aggregator 是一个 AstrBot WebUI 插件，用于在插件页中集中管�
 - 支持 GET、POST、PUT、PATCH、DELETE 请求
 - 支持 Query、Headers、Body、超时、重试和冷却时间配置
 - 支持 `first-ok`、`round-robin`、`random` 三种聚合策略
+- 支持通过 AstrBot 插件设置调整上游响应读取上限
 - 支持消息触发器，匹配后自动调用 API 分组
 - 触发器可返回摘要、文本、图片、音频或视频
 - 支持 JSON 响应字段路径提取，例如 `data.url`
@@ -49,13 +50,15 @@ API Aggregator 是一个 AstrBot WebUI 插件，用于在插件页中集中管�
 - Cooldown Seconds，范围 `0-3600`
 - 是否启用
 
-插件会读取上游响应的前 4096 字节，并按 `Content-Type` 自动归类为：
+插件默认读取上游响应的前 4096 字节，并按 `Content-Type` 自动归类为：
 
 - `json`
 - `text`
 - `binary`
 
 JSON 和文本响应会保存预览内容；二进制响应会保存大小和内容类型等元数据。
+
+可以在 AstrBot 插件设置中调整 `response_read_limit_bytes`。该值控制每次请求最多读取多少响应内容，默认 `4096`，允许范围 `1-1048576`。如果需要解析较大的 JSON 或字段较靠后的响应，可以适当调高；如果 API 可能返回大文件，建议保持较小值。
 
 ### 2. 聚合调用
 
@@ -188,7 +191,7 @@ astrbot-plugin-api-aggregator/
 
 ## 注意事项
 
-- 上游响应最多读取前 4096 字节，适合状态检查、短文本、JSON 和 URL 提取，不适合直接下载大文件。
+- 上游响应读取上限由插件设置 `response_read_limit_bytes` 控制，默认 4096 字节；适合状态检查、短文本、JSON 和 URL 提取，不适合直接下载大文件。
 - `response_path` 只对 JSON 对象做字段提取；文本响应会直接返回文本。
 - 图片、音频、视频触发器只会发送从响应中提取到的 HTTP(S) URL。
 - API Headers、Body 和导入导出文件可能包含密钥，请谨慎分享。
