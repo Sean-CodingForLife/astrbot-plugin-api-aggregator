@@ -123,7 +123,14 @@
       "triggerDescription": "匹配聊天输入，并路由到聚合分组。",
       "logsDescription": "保留手动测试和聚合调用的最近记录。",
       "importExport": "导入和导出",
-      "importDescription": "以 JSON 迁移 API 分组、条目、触发器和运行设置。"
+      "importDescription": "以 JSON 迁移 API 分组、条目、触发器和运行设置。",
+      "importReplaceTitle": "替换",
+      "importReplaceDescription": "用导入的 JSON 覆盖当前 API 分组、条目、触发器和设置。",
+      "importMergeTitle": "合并",
+      "importMergeDescription": "按 id 将导入的分组、API 和触发器合并到当前数据。",
+      "importValidateTitle": "校验",
+      "importValidateDescription": "只检查 JSON 内容，不修改当前数据。",
+      "importOutputEmpty": "尚未执行导入或导出操作。"
     }
   }
 }

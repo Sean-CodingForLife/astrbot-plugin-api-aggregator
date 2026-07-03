@@ -475,6 +475,13 @@ def classify_response_body(content_type: str) -> str:
     return "binary"
 
 
+def parse_json_like_text(text: str) -> Any:
+    stripped = text.lstrip()
+    if not stripped or stripped[0] not in "[{":
+        raise json.JSONDecodeError("Text does not look like JSON", text, 0)
+    return json.loads(text)
+
+
 def build_response_payload(content_type: str, raw: bytes) -> dict[str, Any]:
     body_kind = classify_response_body(content_type)
     if body_kind == "json":
@@ -494,6 +501,16 @@ def build_response_payload(content_type: str, raw: bytes) -> dict[str, Any]:
             }
     if body_kind == "text":
         text = raw.decode("utf-8", errors="replace")
+        try:
+            data = parse_json_like_text(text)
+        except json.JSONDecodeError:
+            pass
+        else:
+            return {
+                "body_kind": "json",
+                "body_data": data,
+                "preview": text[:1000],
+            }
         return {
             "body_kind": body_kind,
             "body_data": text,

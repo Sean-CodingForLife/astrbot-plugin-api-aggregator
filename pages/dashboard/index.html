@@ -166,16 +166,33 @@
             </div>
           </div>
           <div class="import-layout">
-            <select id="importStrategy" title="Import strategy">
-              <option value="replace">Import: Replace</option>
-              <option value="merge">Import: Merge</option>
-              <option value="validate">Import: Validate</option>
-            </select>
-            <label class="secondary import-btn">
-              Import
-              <input id="importInput" type="file" accept="application/json,.json">
-            </label>
-            <button id="exportBtn" class="primary" type="button">Export</button>
+            <div class="import-controls">
+              <select id="importStrategy" title="Import strategy">
+                <option value="replace">Import: Replace</option>
+                <option value="merge">Import: Merge</option>
+                <option value="validate">Import: Validate</option>
+              </select>
+              <label class="secondary import-btn">
+                Import
+                <input id="importInput" type="file" accept="application/json,.json">
+              </label>
+              <button id="exportBtn" class="primary" type="button">Export</button>
+            </div>
+            <div class="import-summary-grid">
+              <article>
+                <span data-i18n-key="importReplaceTitle">Replace</span>
+                <p data-i18n-key="importReplaceDescription">Overwrite current API groups, entries, triggers, and settings with the imported JSON.</p>
+              </article>
+              <article>
+                <span data-i18n-key="importMergeTitle">Merge</span>
+                <p data-i18n-key="importMergeDescription">Merge imported groups, APIs, and triggers into the current data by id.</p>
+              </article>
+              <article>
+                <span data-i18n-key="importValidateTitle">Validate</span>
+                <p data-i18n-key="importValidateDescription">Check the JSON payload without changing current data.</p>
+              </article>
+            </div>
+            <pre id="importOutput" class="import-output">No import or export action yet.</pre>
           </div>
         </section>
       </section>

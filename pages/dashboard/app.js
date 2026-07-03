@@ -23,6 +23,13 @@ const I18N = {
     logsDescription: "Last retained records from manual tests and aggregate calls.",
     importExport: "Import and export",
     importDescription: "Move API groups, entries, triggers, and runtime settings as JSON.",
+    importReplaceTitle: "Replace",
+    importReplaceDescription: "Overwrite current API groups, entries, triggers, and settings with the imported JSON.",
+    importMergeTitle: "Merge",
+    importMergeDescription: "Merge imported groups, APIs, and triggers into the current data by id.",
+    importValidateTitle: "Validate",
+    importValidateDescription: "Check the JSON payload without changing current data.",
+    importOutputEmpty: "No import or export action yet.",
     refresh: "Refresh",
     export: "Export",
     import: "Import",
@@ -117,6 +124,13 @@ const I18N = {
     logsDescription: "保留手动测试和聚合调用的最近记录。",
     importExport: "导入和导出",
     importDescription: "以 JSON 迁移 API 分组、条目、触发器和运行设置。",
+    importReplaceTitle: "替换",
+    importReplaceDescription: "用导入的 JSON 覆盖当前 API 分组、条目、触发器和设置。",
+    importMergeTitle: "合并",
+    importMergeDescription: "按 id 将导入的分组、API 和触发器合并到当前数据。",
+    importValidateTitle: "校验",
+    importValidateDescription: "只检查 JSON 内容，不修改当前数据。",
+    importOutputEmpty: "尚未执行导入或导出操作。",
     refresh: "刷新",
     export: "导出",
     import: "导入",
@@ -272,6 +286,9 @@ function applyTranslations() {
   }
   if (["Waiting for action...", "等待操作..."].includes($("logOutput").textContent.trim())) {
     $("logOutput").textContent = t("waiting");
+  }
+  if ($("importOutput") && ["No import or export action yet.", "尚未执行导入或导出操作。"].includes($("importOutput").textContent.trim())) {
+    $("importOutput").textContent = t("importOutputEmpty");
   }
   setLabelText("apiName", "name");
   setLabelText("apiGroup", "group");
@@ -919,9 +936,11 @@ $("exportBtn").addEventListener("click", async () => {
       link.click();
       URL.revokeObjectURL(url);
       log("Export completed");
+      if ($("importOutput")) $("importOutput").textContent = JSON.stringify(data, null, 2);
     });
   } catch (error) {
     log("Export failed", { message: error.message });
+    if ($("importOutput")) $("importOutput").textContent = JSON.stringify({ message: error.message }, null, 2);
   }
 });
 $("importInput").addEventListener("change", async (event) => {
@@ -937,16 +956,21 @@ $("importInput").addEventListener("change", async (event) => {
       }
       if (strategy === "validate") {
         log("Import validation completed", result.summary);
+        if ($("importOutput")) $("importOutput").textContent = JSON.stringify(result.summary, null, 2);
       } else {
-        log(`Import completed (${strategy})`, {
+        const summary = {
+          strategy,
           groups: result.state?.groups?.length ?? 0,
           apis: result.state?.apis?.length ?? 0,
           triggers: result.state?.settings?.triggers?.length ?? 0,
-        });
+        };
+        log(`Import completed (${strategy})`, summary);
+        if ($("importOutput")) $("importOutput").textContent = JSON.stringify(summary, null, 2);
       }
     });
   } catch (error) {
     log("Import failed", { message: error.message });
+    if ($("importOutput")) $("importOutput").textContent = JSON.stringify({ message: error.message }, null, 2);
   } finally {
     event.target.value = "";
   }

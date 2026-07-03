@@ -123,7 +123,14 @@
       "triggerDescription": "Match chat input and route it into aggregate groups.",
       "logsDescription": "Last retained records from manual tests and aggregate calls.",
       "importExport": "Import and export",
-      "importDescription": "Move API groups, entries, triggers, and runtime settings as JSON."
+      "importDescription": "Move API groups, entries, triggers, and runtime settings as JSON.",
+      "importReplaceTitle": "Replace",
+      "importReplaceDescription": "Overwrite current API groups, entries, triggers, and settings with the imported JSON.",
+      "importMergeTitle": "Merge",
+      "importMergeDescription": "Merge imported groups, APIs, and triggers into the current data by id.",
+      "importValidateTitle": "Validate",
+      "importValidateDescription": "Check the JSON payload without changing current data.",
+      "importOutputEmpty": "No import or export action yet."
     }
   }
 }
