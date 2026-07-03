@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 
 from pydantic import Field as PydanticField
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from astrbot.api import logger
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 import astrbot.api.message_components as Comp
 from astrbot.api.star import Context, Star, register
@@ -31,12 +31,18 @@ DATA_VERSION = 1
 AGGREGATION_STRATEGIES = {"first-ok", "round-robin", "random"}
 TRIGGER_MATCH_MODES = {"contains", "exact", "command"}
 RESPONSE_TYPES = {"summary", "text", "image", "audio", "video"}
+LANGUAGE_MODES = {"auto", "zh-CN", "en-US"}
+DEFAULT_LANGUAGE_MODE = "auto"
 DEFAULT_TIMEOUT_SECONDS = 12
 MAX_TIMEOUT_SECONDS = 120
 MAX_RETRY_COUNT = 5
 MAX_COOLDOWN_SECONDS = 3600
 DEFAULT_RESPONSE_READ_LIMIT_BYTES = 4096
 MAX_RESPONSE_READ_LIMIT_BYTES = 1048576
+DEFAULT_TEST_LOG_LIMIT = 100
+MAX_TEST_LOG_LIMIT = 1000
+DEFAULT_PREVIEW_MAX_CHARS = 1200
+MAX_PREVIEW_MAX_CHARS = 10000
 
 
 @dataclass
@@ -127,6 +133,20 @@ def clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, parsed))
+
+
+def normalize_language_mode(value: Any) -> str:
+    mode = str(value or DEFAULT_LANGUAGE_MODE).strip()
+    return mode if mode in LANGUAGE_MODES else DEFAULT_LANGUAGE_MODE
+
+
+def runtime_language(value: Any) -> str:
+    mode = normalize_language_mode(value)
+    return "en-US" if mode == "auto" else mode
+
+
+def text_for(language: str, zh: str, en: str) -> str:
+    return zh if runtime_language(language) == "zh-CN" else en
 
 
 def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
@@ -225,7 +245,7 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    cleaned_logs = [item for item in logs if isinstance(item, dict)][-100:]
+    cleaned_logs = [item for item in logs if isinstance(item, dict)][-MAX_TEST_LOG_LIMIT:]
     strategy = str(settings.get("strategy") or "first-ok")
     if strategy not in AGGREGATION_STRATEGIES:
         strategy = "first-ok"
@@ -642,7 +662,12 @@ def ordered_candidates(data: dict[str, Any], group_id: str, strategy: str) -> tu
     return candidates, None
 
 
-def record_test_result(data: dict[str, Any], result: dict[str, Any]) -> None:
+def record_test_result(
+    data: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    test_log_limit: int = DEFAULT_TEST_LOG_LIMIT,
+) -> None:
     api_id = result.get("api_id")
     for item in data["apis"]:
         if item["id"] == api_id:
@@ -665,7 +690,8 @@ def record_test_result(data: dict[str, Any], result: dict[str, Any]) -> None:
             item["updated_at"] = now_ms()
             break
     data["test_logs"].append(result)
-    data["test_logs"] = data["test_logs"][-100:]
+    log_limit = clamp_int(test_log_limit, DEFAULT_TEST_LOG_LIMIT, 1, MAX_TEST_LOG_LIMIT)
+    data["test_logs"] = data["test_logs"][-log_limit:]
 
 
 def trigger_matches(rule: dict[str, Any], message: str) -> bool:
@@ -681,7 +707,12 @@ def trigger_matches(rule: dict[str, Any], message: str) -> bool:
     return trigger in message
 
 
-def format_aggregate_reply(result: dict[str, Any]) -> str:
+def format_aggregate_reply(
+    result: dict[str, Any],
+    *,
+    preview_max_chars: int = DEFAULT_PREVIEW_MAX_CHARS,
+    language_mode: str = DEFAULT_LANGUAGE_MODE,
+) -> str:
     selected = result.get("selected") if isinstance(result.get("selected"), dict) else None
     attempts = result.get("attempts") if isinstance(result.get("attempts"), list) else []
     if not selected:
@@ -693,18 +724,27 @@ def format_aggregate_reply(result: dict[str, Any]) -> str:
         detail = "\n".join(errors)
         return "\n".join(
             [
-                f"API Aggregator: all {len(attempts)} attempt(s) failed.",
+                text_for(
+                    language_mode,
+                    f"API Aggregator：全部 {len(attempts)} 次尝试失败。",
+                    f"API Aggregator: all {len(attempts)} attempt(s) failed.",
+                ),
                 detail,
             ]
         ).strip()
     preview = str(selected.get("preview") or "").strip()
-    if len(preview) > 1200:
-        preview = preview[:1200] + "..."
+    preview_limit = clamp_int(preview_max_chars, DEFAULT_PREVIEW_MAX_CHARS, 1, MAX_PREVIEW_MAX_CHARS)
+    if len(preview) > preview_limit:
+        preview = preview[:preview_limit] + "..."
     return "\n".join(
         [
-            f"API Aggregator: {selected.get('api_name')} OK",
-            f"Status: {selected.get('status')}",
-            f"Elapsed: {selected.get('elapsed_ms')} ms",
+            text_for(
+                language_mode,
+                f"API Aggregator：{selected.get('api_name')} 调用成功",
+                f"API Aggregator: {selected.get('api_name')} OK",
+            ),
+            text_for(language_mode, f"状态码：{selected.get('status')}", f"Status: {selected.get('status')}"),
+            text_for(language_mode, f"耗时：{selected.get('elapsed_ms')} ms", f"Elapsed: {selected.get('elapsed_ms')} ms"),
             preview,
         ]
     ).strip()
@@ -746,7 +786,12 @@ def response_value(result: dict[str, Any], path: str) -> Any:
     return extract_path(source, path)
 
 
-def preview_response_path(result: dict[str, Any], path: str) -> dict[str, Any]:
+def preview_response_path(
+    result: dict[str, Any],
+    path: str,
+    *,
+    language_mode: str = DEFAULT_LANGUAGE_MODE,
+) -> dict[str, Any]:
     value = response_value(result, path)
     matched = path == "" or value is not None
     selected = result.get("selected") if isinstance(result.get("selected"), dict) else {}
@@ -754,14 +799,16 @@ def preview_response_path(result: dict[str, Any], path: str) -> dict[str, Any]:
     source_type = type(source).__name__
     body_kind = str(selected.get("body_kind") or "")
     if path and body_kind != "json":
-        message = (
-            f"Path extraction only supports JSON responses. Current body kind: {body_kind or 'unknown'}."
+        message = text_for(
+            language_mode,
+            f"路径提取只支持 JSON 响应。当前响应类型：{body_kind or 'unknown'}。",
+            f"Path extraction only supports JSON responses. Current body kind: {body_kind or 'unknown'}.",
         )
     else:
-        message = (
-            "Path matched response data."
-            if matched
-            else f"Path did not match the latest {source_type} payload."
+        message = text_for(
+            language_mode,
+            "路径已匹配响应数据。" if matched else f"路径未匹配最新 {source_type} 响应。",
+            "Path matched response data." if matched else f"Path did not match the latest {source_type} payload.",
         )
     return {
         "matched": matched,
@@ -775,7 +822,13 @@ def preview_response_path(result: dict[str, Any], path: str) -> dict[str, Any]:
     }
 
 
-def format_missing_url_reply(media_type: str, path: str, result: dict[str, Any]) -> str:
+def format_missing_url_reply(
+    media_type: str,
+    path: str,
+    result: dict[str, Any],
+    *,
+    language_mode: str = DEFAULT_LANGUAGE_MODE,
+) -> str:
     selected = result.get("selected") if isinstance(result.get("selected"), dict) else {}
     value = response_value(result, path)
     value_type = type(value).__name__ if value is not None else "null"
@@ -783,12 +836,21 @@ def format_missing_url_reply(media_type: str, path: str, result: dict[str, Any])
     preview = str(selected.get("preview") or "").strip()
     if len(preview) > 300:
         preview = preview[:300] + "..."
+    media_label = text_for(
+        language_mode,
+        {"image": "图片", "audio": "音频", "video": "视频"}.get(media_type, media_type),
+        media_type,
+    )
     return "\n".join(
         [
-            f"API Aggregator: {media_type} URL not found at {path or '<root>'}.",
-            f"Extracted value type: {value_type}",
+            text_for(
+                language_mode,
+                f"API Aggregator：未在 {path or '<root>'} 找到{media_label} URL。",
+                f"API Aggregator: {media_label} URL not found at {path or '<root>'}.",
+            ),
+            text_for(language_mode, f"提取值类型：{value_type}", f"Extracted value type: {value_type}"),
             f"Content-Type: {content_type or '<empty>'}",
-            f"Preview: {preview or '<empty>'}",
+            text_for(language_mode, f"预览：{preview or '<empty>'}", f"Preview: {preview or '<empty>'}"),
         ]
     )
 
@@ -960,15 +1022,34 @@ class ApiAggregatorCallTool(FunctionTool[AstrAgentContext]):
     "",
 )
 class ApiAggregatorPlugin(Star):
-    def __init__(self, context: Context, config: dict | None = None) -> None:
+    def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
         super().__init__(context)
         self.context = context
         self.config = config or {}
+        self.language_mode = normalize_language_mode(self.config.get("language_mode"))
         self.response_read_limit_bytes = clamp_int(
             self.config.get("response_read_limit_bytes"),
             DEFAULT_RESPONSE_READ_LIMIT_BYTES,
             1,
             MAX_RESPONSE_READ_LIMIT_BYTES,
+        )
+        self.default_timeout_seconds = clamp_int(
+            self.config.get("default_timeout_seconds"),
+            DEFAULT_TIMEOUT_SECONDS,
+            1,
+            MAX_TIMEOUT_SECONDS,
+        )
+        self.test_log_limit = clamp_int(
+            self.config.get("test_log_limit"),
+            DEFAULT_TEST_LOG_LIMIT,
+            1,
+            MAX_TEST_LOG_LIMIT,
+        )
+        self.preview_max_chars = clamp_int(
+            self.config.get("preview_max_chars"),
+            DEFAULT_PREVIEW_MAX_CHARS,
+            1,
+            MAX_PREVIEW_MAX_CHARS,
         )
         self.root = Path(__file__).resolve().parent
         self.store = ApiAggregatorStore(Path(get_astrbot_plugin_data_path()) / PLUGIN_NAME)
@@ -1008,7 +1089,20 @@ class ApiAggregatorPlugin(Star):
 
     async def state(self):
         data = await self.store.read()
-        return ok({"plugin": PLUGIN_NAME, "version": VERSION, **data})
+        return ok(
+            {
+                "plugin": PLUGIN_NAME,
+                "version": VERSION,
+                "runtime_config": {
+                    "default_timeout_seconds": self.default_timeout_seconds,
+                    "language_mode": self.language_mode,
+                    "response_read_limit_bytes": self.response_read_limit_bytes,
+                    "test_log_limit": self.test_log_limit,
+                    "preview_max_chars": self.preview_max_chars,
+                },
+                **data,
+            }
+        )
 
     async def group_create(self):
         body = await read_json_body()
@@ -1098,7 +1192,11 @@ class ApiAggregatorPlugin(Star):
         body = await read_json_body()
 
         def mutate(data):
-            api = parse_api_payload(body)
+            payload = {
+                "timeout_seconds": self.default_timeout_seconds,
+                **body,
+            }
+            api = parse_api_payload(payload)
             group_ids = {group["id"] for group in data["groups"]}
             if api["group_id"] not in group_ids:
                 api["group_id"] = data["groups"][0]["id"]
@@ -1186,7 +1284,7 @@ class ApiAggregatorPlugin(Star):
         )
 
         def mutate(next_data):
-            record_test_result(next_data, result)
+            record_test_result(next_data, result, test_log_limit=self.test_log_limit)
             return result
 
         saved_result, state = await self.store.mutate(mutate)
@@ -1207,7 +1305,7 @@ class ApiAggregatorPlugin(Star):
         def mutate(next_data):
             result_by_id = {item["api_id"]: item for item in results}
             for result in result_by_id.values():
-                record_test_result(next_data, result)
+                record_test_result(next_data, result, test_log_limit=self.test_log_limit)
             return results
 
         saved_results, state = await self.store.mutate(mutate)
@@ -1258,7 +1356,7 @@ class ApiAggregatorPlugin(Star):
 
         def mutate(next_data):
             for result in results:
-                record_test_result(next_data, result)
+                record_test_result(next_data, result, test_log_limit=self.test_log_limit)
             if strategy == "round-robin" and start_index is not None:
                 cursors = next_data.setdefault("settings", {}).setdefault("cursors", {})
                 cursors[group_id] = (start_index + 1) % len(candidates)
@@ -1420,8 +1518,12 @@ class ApiAggregatorPlugin(Star):
         )
 
         def mutate(next_data):
-            record_test_result(next_data, result)
-            return preview_response_path({"selected": result}, path)
+            record_test_result(next_data, result, test_log_limit=self.test_log_limit)
+            return preview_response_path(
+                {"selected": result},
+                path,
+                language_mode=self.language_mode,
+            )
 
         preview, state = await self.store.mutate(mutate)
         return ok({"preview": preview, "result": result, "state": state})
@@ -1453,7 +1555,13 @@ class ApiAggregatorPlugin(Star):
                 )
                 if not result.get("ok"):
                     logger.info(f"[api_aggregator] aggregate attempts failed: {result.get('attempts')}")
-                    yield event.plain_result(format_aggregate_reply(result))
+                    yield event.plain_result(
+                        format_aggregate_reply(
+                            result,
+                            preview_max_chars=self.preview_max_chars,
+                            language_mode=self.language_mode,
+                        )
+                    )
                     if rule.get("stop_event", True):
                         event.stop_event()
                     return
@@ -1467,7 +1575,14 @@ class ApiAggregatorPlugin(Star):
                         logger.info(
                             f"[api_aggregator] image url extraction failed: path={response_path!r}, value={image_url!r}, selected={result.get('selected')}"
                         )
-                        yield event.plain_result(format_missing_url_reply("image", response_path, result))
+                        yield event.plain_result(
+                            format_missing_url_reply(
+                                "image",
+                                response_path,
+                                result,
+                                language_mode=self.language_mode,
+                            )
+                        )
                 elif response_type == "audio":
                     response_path = str(rule.get("response_path") or "")
                     audio_url = str(response_value(result, response_path) or "").strip()
@@ -1477,7 +1592,14 @@ class ApiAggregatorPlugin(Star):
                         logger.info(
                             f"[api_aggregator] audio url extraction failed: path={response_path!r}, value={audio_url!r}, selected={result.get('selected')}"
                         )
-                        yield event.plain_result(format_missing_url_reply("audio", response_path, result))
+                        yield event.plain_result(
+                            format_missing_url_reply(
+                                "audio",
+                                response_path,
+                                result,
+                                language_mode=self.language_mode,
+                            )
+                        )
                 elif response_type == "video":
                     response_path = str(rule.get("response_path") or "")
                     video_url = str(response_value(result, response_path) or "").strip()
@@ -1487,7 +1609,14 @@ class ApiAggregatorPlugin(Star):
                         logger.info(
                             f"[api_aggregator] video url extraction failed: path={response_path!r}, value={video_url!r}, selected={result.get('selected')}"
                         )
-                        yield event.plain_result(format_missing_url_reply("video", response_path, result))
+                        yield event.plain_result(
+                            format_missing_url_reply(
+                                "video",
+                                response_path,
+                                result,
+                                language_mode=self.language_mode,
+                            )
+                        )
                 elif response_type == "text":
                     value = response_value(result, str(rule.get("response_path") or ""))
                     if isinstance(value, (dict, list)):
@@ -1495,10 +1624,22 @@ class ApiAggregatorPlugin(Star):
                     else:
                         yield event.plain_result(str(value))
                 else:
-                    yield event.plain_result(format_aggregate_reply(result))
+                    yield event.plain_result(
+                        format_aggregate_reply(
+                            result,
+                            preview_max_chars=self.preview_max_chars,
+                            language_mode=self.language_mode,
+                        )
+                    )
             else:
                 logger.info(f"[api_aggregator] aggregate failed: {state_or_error}")
-                yield event.plain_result(f"API Aggregator: {state_or_error}")
+                yield event.plain_result(
+                    text_for(
+                        self.language_mode,
+                        f"API Aggregator：{state_or_error}",
+                        f"API Aggregator: {state_or_error}",
+                    )
+                )
             if rule.get("stop_event", True):
                 event.stop_event()
             return

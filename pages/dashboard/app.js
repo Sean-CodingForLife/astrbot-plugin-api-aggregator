@@ -3,12 +3,299 @@ const state = {
   apis: [],
   test_logs: [],
   settings: { strategy: "first-ok", cursors: {} },
+  runtime_config: { default_timeout_seconds: 12, language_mode: "auto" },
   selectedGroupId: "all",
   search: "",
 };
 const busyState = new Map();
 
 const $ = (id) => document.getElementById(id);
+
+const I18N = {
+  "en-US": {
+    appSubtitle: "Manage API entries, groups, enable state, tests, import, and export.",
+    refresh: "Refresh",
+    export: "Export",
+    import: "Import",
+    importReplace: "Import: Replace",
+    importMerge: "Import: Merge",
+    importValidate: "Import: Validate",
+    totalApis: "Total APIs",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    lastOk: "Last OK",
+    aggregator: "Aggregator",
+    firstOk: "First OK",
+    roundRobin: "Round Robin",
+    random: "Random",
+    saveStrategy: "Save Strategy",
+    callGroup: "Call Group",
+    noAggregate: "No aggregate call yet.",
+    messageTriggers: "Message Triggers",
+    addTrigger: "Add Trigger",
+    groups: "Groups",
+    add: "Add",
+    apis: "APIs",
+    searchPlaceholder: "Search name or URL",
+    testEnabled: "Test Enabled",
+    addApi: "Add API",
+    testLogs: "Test Logs",
+    clearView: "Clear View",
+    waiting: "Waiting for action...",
+    name: "Name",
+    group: "Group",
+    method: "Method",
+    queryJson: "Query JSON",
+    headersJson: "Headers JSON",
+    body: "Body",
+    timeoutSeconds: "Timeout Seconds",
+    retryCount: "Retry Count",
+    cooldownSeconds: "Cooldown Seconds",
+    description: "Description",
+    fieldDescription: "Description",
+    cancel: "Cancel",
+    save: "Save",
+    trigger: "Trigger",
+    matchMode: "Match Mode",
+    strategy: "Strategy",
+    previewApi: "Preview API",
+    responseType: "Response Type",
+    responsePath: "Response Path",
+    previewPath: "Preview Path",
+    noPreview: "No preview yet.",
+    stopEvent: "Stop Event",
+    contains: "Contains",
+    exact: "Exact",
+    command: "Command",
+    summary: "Summary",
+    text: "Text",
+    image: "Image",
+    audio: "Audio",
+    video: "Video",
+    all: "All",
+    unknown: "Unknown",
+    status: "Status",
+    timeout: "Timeout",
+    retry: "Retry",
+    cooldown: "Cooldown",
+    notTested: "Not tested",
+    noApis: "No APIs yet. Click Add API to start.",
+    noTriggers: "No message triggers yet.",
+    turnOff: "Turn off",
+    turnOn: "Turn on",
+    edit: "Edit",
+    delete: "Delete",
+    test: "Test",
+    selectedApi: "Selected API",
+    elapsed: "Elapsed",
+    attempts: "Attempts",
+    aggregateFailed: "Aggregate call failed.",
+    reason: "Reason",
+    noCandidate: "No candidate succeeded.",
+    previewFinished: "Preview finished.",
+    path: "Path",
+    matched: "Matched",
+    valueType: "Value type",
+    value: "Value",
+  },
+  "zh-CN": {
+    appSubtitle: "管理 API 条目、分组、启用状态、测试、导入和导出。",
+    refresh: "刷新",
+    export: "导出",
+    import: "导入",
+    importReplace: "导入：替换",
+    importMerge: "导入：合并",
+    importValidate: "导入：校验",
+    totalApis: "API 总数",
+    enabled: "已启用",
+    disabled: "已禁用",
+    lastOk: "最近成功",
+    aggregator: "聚合器",
+    firstOk: "首个成功",
+    roundRobin: "轮询",
+    random: "随机",
+    saveStrategy: "保存策略",
+    callGroup: "调用分组",
+    noAggregate: "尚未执行聚合调用。",
+    messageTriggers: "消息触发器",
+    addTrigger: "添加触发器",
+    groups: "分组",
+    add: "添加",
+    apis: "API",
+    searchPlaceholder: "搜索名称或 URL",
+    testEnabled: "测试已启用",
+    addApi: "添加 API",
+    testLogs: "测试日志",
+    clearView: "清空视图",
+    waiting: "等待操作...",
+    name: "名称",
+    group: "分组",
+    method: "方法",
+    queryJson: "Query JSON",
+    headersJson: "Headers JSON",
+    body: "Body",
+    timeoutSeconds: "超时秒数",
+    retryCount: "重试次数",
+    cooldownSeconds: "冷却秒数",
+    description: "描述",
+    fieldDescription: "描述",
+    cancel: "取消",
+    save: "保存",
+    trigger: "触发词",
+    matchMode: "匹配模式",
+    strategy: "策略",
+    previewApi: "预览 API",
+    responseType: "响应类型",
+    responsePath: "响应路径",
+    previewPath: "预览路径",
+    noPreview: "尚未预览。",
+    stopEvent: "停止事件",
+    contains: "包含",
+    exact: "精确",
+    command: "命令",
+    summary: "摘要",
+    text: "文本",
+    image: "图片",
+    audio: "音频",
+    video: "视频",
+    all: "全部",
+    unknown: "未知",
+    status: "状态",
+    timeout: "超时",
+    retry: "重试",
+    cooldown: "冷却",
+    notTested: "未测试",
+    noApis: "暂无 API。点击添加 API 开始。",
+    noTriggers: "暂无消息触发器。",
+    turnOff: "关闭",
+    turnOn: "开启",
+    edit: "编辑",
+    delete: "删除",
+    test: "测试",
+    selectedApi: "选中 API",
+    elapsed: "耗时",
+    attempts: "尝试次数",
+    aggregateFailed: "聚合调用失败。",
+    reason: "原因",
+    noCandidate: "没有候选 API 成功。",
+    previewFinished: "预览完成。",
+    path: "路径",
+    matched: "匹配",
+    valueType: "值类型",
+    value: "值",
+  },
+};
+
+function currentLanguage() {
+  const mode = state.runtime_config?.language_mode || "auto";
+  if (mode === "zh-CN" || mode === "en-US") return mode;
+  const api = window.AstrBotPluginPage;
+  const locale = api?.getLocale?.() || api?.getContext?.()?.locale || navigator.language || "en-US";
+  return locale.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+}
+
+function t(key) {
+  const language = currentLanguage();
+  const fallback = I18N[language]?.[key] || I18N["en-US"][key] || key;
+  const api = window.AstrBotPluginPage;
+  return typeof api?.t === "function" ? api.t(`pages.dashboard.${key}`, fallback) : fallback;
+}
+
+function setText(selector, key) {
+  const element = document.querySelector(selector);
+  if (element) element.textContent = t(key);
+}
+
+function setLabelText(inputId, key) {
+  const label = $(inputId)?.closest("label");
+  const textNode = Array.from(label?.childNodes || []).find((node) => node.nodeType === Node.TEXT_NODE);
+  if (textNode) {
+    textNode.textContent = label?.firstElementChild?.id === inputId ? ` ${t(key)}` : t(key);
+  }
+}
+
+function setOptionText(selectId, value, key) {
+  const option = Array.from($(selectId)?.options || []).find((item) => item.value === value);
+  if (option) option.textContent = t(key);
+}
+
+function applyTranslations() {
+  document.documentElement.lang = currentLanguage();
+  setText(".topbar p", "appSubtitle");
+  setText("#refreshBtn", "refresh");
+  setText("#exportBtn", "export");
+  setOptionText("importStrategy", "replace", "importReplace");
+  setOptionText("importStrategy", "merge", "importMerge");
+  setOptionText("importStrategy", "validate", "importValidate");
+  const importLabel = $("importInput")?.closest("label");
+  if (importLabel?.firstChild) importLabel.firstChild.textContent = `${t("import")} `;
+  setText(".summary-grid .metric:nth-child(1) span", "totalApis");
+  setText(".summary-grid .metric:nth-child(2) span", "enabled");
+  setText(".summary-grid .metric:nth-child(3) span", "lastOk");
+  setText(".aggregate-panel h2", "aggregator");
+  setOptionText("strategySelect", "first-ok", "firstOk");
+  setOptionText("strategySelect", "round-robin", "roundRobin");
+  setOptionText("strategySelect", "random", "random");
+  setText("#saveSettingsBtn", "saveStrategy");
+  setText("#callAggregateBtn", "callGroup");
+  setText(".trigger-panel h2", "messageTriggers");
+  setText("#addTriggerBtn", "addTrigger");
+  setText(".groups-panel h2", "groups");
+  setText("#addGroupBtn", "add");
+  $("searchInput").placeholder = t("searchPlaceholder");
+  setText("#testAllBtn", "testEnabled");
+  setText("#addApiBtn", "addApi");
+  setText(".logs-panel h2", "testLogs");
+  setText("#clearLogViewBtn", "clearView");
+  if (["No aggregate call yet.", "尚未执行聚合调用。"].includes($("aggregateOutput").textContent.trim())) {
+    $("aggregateOutput").textContent = t("noAggregate");
+  }
+  if (["Waiting for action...", "等待操作..."].includes($("logOutput").textContent.trim())) {
+    $("logOutput").textContent = t("waiting");
+  }
+  setLabelText("apiName", "name");
+  setLabelText("apiGroup", "group");
+  setLabelText("apiMethod", "method");
+  setLabelText("apiQuery", "queryJson");
+  setLabelText("apiHeaders", "headersJson");
+  setLabelText("apiBody", "body");
+  setLabelText("apiTimeoutSeconds", "timeoutSeconds");
+  setLabelText("apiRetryCount", "retryCount");
+  setLabelText("apiCooldownSeconds", "cooldownSeconds");
+  setLabelText("apiDescription", "fieldDescription");
+  setLabelText("apiEnabled", "enabled");
+  setText("#cancelApiBtn", "cancel");
+  setText("#apiForm button[type='submit']", "save");
+  setLabelText("groupName", "name");
+  setLabelText("groupDescription", "fieldDescription");
+  setText("#cancelGroupBtn", "cancel");
+  setText("#groupForm button[type='submit']", "save");
+  setLabelText("triggerPhrase", "trigger");
+  $("triggerPhrase").placeholder = currentLanguage() === "zh-CN" ? "示例：/api" : "example: /api";
+  setLabelText("triggerMode", "matchMode");
+  setLabelText("triggerGroup", "group");
+  setLabelText("triggerStrategy", "strategy");
+  setLabelText("triggerPreviewApi", "previewApi");
+  setLabelText("triggerResponseType", "responseType");
+  setLabelText("triggerResponsePath", "responsePath");
+  $("triggerResponsePath").placeholder = currentLanguage() === "zh-CN" ? "示例：data.link" : "example: data.link";
+  setOptionText("triggerMode", "contains", "contains");
+  setOptionText("triggerMode", "exact", "exact");
+  setOptionText("triggerMode", "command", "command");
+  setOptionText("triggerStrategy", "first-ok", "firstOk");
+  setOptionText("triggerStrategy", "round-robin", "roundRobin");
+  setOptionText("triggerStrategy", "random", "random");
+  setOptionText("triggerResponseType", "summary", "summary");
+  setOptionText("triggerResponseType", "text", "text");
+  setOptionText("triggerResponseType", "image", "image");
+  setOptionText("triggerResponseType", "audio", "audio");
+  setOptionText("triggerResponseType", "video", "video");
+  setText("#previewResponsePathBtn", "previewPath");
+  setLabelText("triggerEnabled", "enabled");
+  setLabelText("triggerStopEvent", "stopEvent");
+  setText("#cancelTriggerBtn", "cancel");
+  setText("#triggerForm button[type='submit']", "save");
+}
 
 function log(message, data) {
   const lines = [`[${new Date().toLocaleTimeString()}] ${message}`];
@@ -83,9 +370,11 @@ function applyState(data) {
   state.apis = Array.isArray(data.apis) ? data.apis : [];
   state.test_logs = Array.isArray(data.test_logs) ? data.test_logs : [];
   state.settings = data.settings && typeof data.settings === "object" ? data.settings : { strategy: "first-ok", cursors: {} };
+  state.runtime_config = data.runtime_config && typeof data.runtime_config === "object" ? data.runtime_config : { default_timeout_seconds: 12, language_mode: "auto" };
   if (state.selectedGroupId !== "all" && !state.groups.some((group) => group.id === state.selectedGroupId)) {
     state.selectedGroupId = "all";
   }
+  applyTranslations();
   render();
 }
 
@@ -93,42 +382,42 @@ async function refresh() {
   return withBusy("refresh", { target: "refreshBtn", busyText: "Refreshing...", startText: "Refreshing state..." }, async () => {
     const data = await apiGet("state");
     applyState(data);
-    log("State refreshed", { apis: state.apis.length, groups: state.groups.length });
+    log(currentLanguage() === "zh-CN" ? "状态已刷新" : "State refreshed", { apis: state.apis.length, groups: state.groups.length });
   });
 }
 
 function groupName(id) {
-  return state.groups.find((group) => group.id === id)?.name || "Unknown";
+  return state.groups.find((group) => group.id === id)?.name || t("unknown");
 }
 
 function cooldownLabel(api) {
   const remainingMs = Math.max(0, Number(api?.cooldown_until || 0) - Date.now());
   if (!remainingMs) return "";
-  return `Cooldown ${Math.ceil(remainingMs / 1000)}s`;
+  return `${t("cooldown")} ${Math.ceil(remainingMs / 1000)}s`;
 }
 
 function summarizeAggregateResult(result) {
-  if (!result || typeof result !== "object") return "No aggregate result.";
+  if (!result || typeof result !== "object") return t("noAggregate");
   if (result.ok && result.selected) {
     return [
-      `Selected API: ${result.selected.api_name}`,
-      `Status: ${result.selected.status ?? "-"}`,
-      `Elapsed: ${result.selected.elapsed_ms ?? 0} ms`,
-      `Attempts: ${Array.isArray(result.attempts) ? result.attempts.length : 0}`,
+      `${t("selectedApi")}: ${result.selected.api_name}`,
+      `${t("status")}: ${result.selected.status ?? "-"}`,
+      `${t("elapsed")}: ${result.selected.elapsed_ms ?? 0} ms`,
+      `${t("attempts")}: ${Array.isArray(result.attempts) ? result.attempts.length : 0}`,
     ].join("\n");
   }
   return [
-    "Aggregate call failed.",
-    `Reason: ${result.failure_reason || "No candidate succeeded."}`,
-    `Attempts: ${Array.isArray(result.attempts) ? result.attempts.length : 0}`,
+    t("aggregateFailed"),
+    `${t("reason")}: ${result.failure_reason || t("noCandidate")}`,
+    `${t("attempts")}: ${Array.isArray(result.attempts) ? result.attempts.length : 0}`,
   ].join("\n");
 }
 
 function summarizePreview(preview, result) {
   const lines = [
-    preview?.message || "Preview finished.",
-    `Matched: ${preview?.matched ? "yes" : "no"}`,
-    `Type: ${preview?.value_type || "unknown"}`,
+    preview?.message || t("previewFinished"),
+    `${t("matched")}: ${preview?.matched ? "yes" : "no"}`,
+    `${t("valueType")}: ${preview?.value_type || "unknown"}`,
   ];
   if (result?.attempt_count) {
     lines.push(`Request attempts: ${result.attempt_count}`);
@@ -160,16 +449,16 @@ function renderGroups() {
   const groupList = $("groupList");
   const allCount = state.apis.length;
   const items = [
-    `<div class="group-row"><button class="group-item ${state.selectedGroupId === "all" ? "is-active" : ""}" data-action="select-group" data-id="all"><span>All</span><span>${allCount}</span></button></div>`,
+    `<div class="group-row"><button class="group-item ${state.selectedGroupId === "all" ? "is-active" : ""}" data-action="select-group" data-id="all"><span>${t("all")}</span><span>${allCount}</span></button></div>`,
     ...state.groups.map((group) => {
       const count = state.apis.filter((api) => api.group_id === group.id).length;
       const deleteButton = group.id === "default"
         ? ""
-        : `<button class="danger" data-action="delete-group" data-id="${escapeHtml(group.id)}">Delete</button>`;
+        : `<button class="danger" data-action="delete-group" data-id="${escapeHtml(group.id)}">${t("delete")}</button>`;
       return `
         <div class="group-row">
           <button class="group-item ${state.selectedGroupId === group.id ? "is-active" : ""}" data-action="select-group" data-id="${escapeHtml(group.id)}"><span>${escapeHtml(group.name)}</span><span>${count}</span></button>
-          <button data-action="edit-group" data-id="${escapeHtml(group.id)}">Edit</button>
+          <button data-action="edit-group" data-id="${escapeHtml(group.id)}">${t("edit")}</button>
           ${deleteButton}
         </div>
       `;
@@ -180,7 +469,7 @@ function renderGroups() {
 
 function renderAggregateControls() {
   const options = [
-    `<option value="all">All enabled APIs</option>`,
+    `<option value="all">${t("all")}</option>`,
     ...state.groups.map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`),
   ];
   const aggregateGroup = $("aggregateGroup");
@@ -192,7 +481,7 @@ function renderAggregateControls() {
 
 function groupOptions(selectedId = "all") {
   const options = [
-    `<option value="all">All enabled APIs</option>`,
+    `<option value="all">${t("all")}</option>`,
     ...state.groups.map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`),
   ];
   const valid = selectedId === "all" || state.groups.some((group) => group.id === selectedId);
@@ -209,7 +498,7 @@ function renderTriggers() {
   const list = $("triggerList");
   const triggers = Array.isArray(state.settings.triggers) ? state.settings.triggers : [];
   if (!triggers.length) {
-    list.innerHTML = `<div class="api-card">No message triggers yet.</div>`;
+    list.innerHTML = `<div class="api-card">${t("noTriggers")}</div>`;
     return;
   }
   list.innerHTML = triggers.map((rule) => `
@@ -219,19 +508,19 @@ function renderTriggers() {
           <strong>${escapeHtml(rule.trigger)}</strong>
           <span class="badge">${escapeHtml(rule.match_mode)}</span>
           <span class="badge">${escapeHtml(rule.strategy)}</span>
-          <span class="badge">${escapeHtml(rule.response_type || "summary")}</span>
-          <span class="badge">${rule.enabled ? "Enabled" : "Disabled"}</span>
-          <span class="badge">${rule.stop_event ? "Stops event" : "Pass-through"}</span>
+          <span class="badge">${t(rule.response_type || "summary")}</span>
+          <span class="badge">${rule.enabled ? t("enabled") : t("disabled")}</span>
+          <span class="badge">${rule.stop_event ? (currentLanguage() === "zh-CN" ? "停止事件" : "Stops event") : (currentLanguage() === "zh-CN" ? "继续传递" : "Pass-through")}</span>
         </div>
         <div class="api-meta">
           <span class="badge">${escapeHtml(groupName(rule.group_id))}</span>
-          ${rule.response_path ? `<span class="badge">Path: ${escapeHtml(rule.response_path)}</span>` : ""}
+          ${rule.response_path ? `<span class="badge">${t("path")}: ${escapeHtml(rule.response_path)}</span>` : ""}
         </div>
       </div>
       <div class="api-actions">
-        <button data-action="toggle-trigger" data-id="${escapeHtml(rule.id)}">${rule.enabled ? "Turn off" : "Turn on"}</button>
-        <button data-action="edit-trigger" data-id="${escapeHtml(rule.id)}">Edit</button>
-        <button class="danger" data-action="delete-trigger" data-id="${escapeHtml(rule.id)}">Delete</button>
+        <button data-action="toggle-trigger" data-id="${escapeHtml(rule.id)}">${rule.enabled ? t("turnOff") : t("turnOn")}</button>
+        <button data-action="edit-trigger" data-id="${escapeHtml(rule.id)}">${t("edit")}</button>
+        <button class="danger" data-action="delete-trigger" data-id="${escapeHtml(rule.id)}">${t("delete")}</button>
       </div>
     </article>
   `).join("");
@@ -240,14 +529,15 @@ function renderTriggers() {
 function renderApis() {
   const list = $("apiList");
   const apis = filteredApis();
-  $("apiPanelTitle").textContent = state.selectedGroupId === "all" ? "APIs" : `APIs - ${groupName(state.selectedGroupId)}`;
+  const defaultTimeoutSeconds = Number.parseInt(state.runtime_config?.default_timeout_seconds ?? 12, 10) || 12;
+  $("apiPanelTitle").textContent = state.selectedGroupId === "all" ? t("apis") : `${t("apis")} - ${groupName(state.selectedGroupId)}`;
   if (!apis.length) {
-    list.innerHTML = `<div class="api-card">No APIs yet. Click Add API to start.</div>`;
+    list.innerHTML = `<div class="api-card">${t("noApis")}</div>`;
     return;
   }
   list.innerHTML = apis.map((api) => {
     const statusClass = api.last_tested_at ? (api.last_ok ? "ok" : "fail") : "";
-    const statusText = api.last_tested_at ? (api.last_ok ? "OK" : "FAIL") : "Not tested";
+    const statusText = api.last_tested_at ? (api.last_ok ? "OK" : "FAIL") : t("notTested");
     return `
       <article class="api-card">
         <div class="api-main">
@@ -256,24 +546,24 @@ function renderApis() {
               <strong>${escapeHtml(api.name)}</strong>
               <span class="badge">${escapeHtml(api.method)}</span>
               <span class="badge ${statusClass}">${statusText}</span>
-              <span class="badge">${api.enabled ? "Enabled" : "Disabled"}</span>
+              <span class="badge">${api.enabled ? t("enabled") : t("disabled")}</span>
             </div>
             <div class="api-url">${escapeHtml(api.url)}</div>
             <div class="api-meta">
               <span class="badge">${escapeHtml(groupName(api.group_id))}</span>
-              <span class="badge">Status: ${api.last_status ?? "-"}</span>
-              <span class="badge">Timeout: ${escapeHtml(api.timeout_seconds ?? 12)}s</span>
-              <span class="badge">Retry: ${escapeHtml(api.retry_count ?? 0)}</span>
-              <span class="badge">Cooldown: ${escapeHtml(api.cooldown_seconds ?? 0)}s</span>
+              <span class="badge">${t("status")}: ${api.last_status ?? "-"}</span>
+              <span class="badge">${t("timeout")}: ${escapeHtml(api.timeout_seconds ?? defaultTimeoutSeconds)}s</span>
+              <span class="badge">${t("retry")}: ${escapeHtml(api.retry_count ?? 0)}</span>
+              <span class="badge">${t("cooldown")}: ${escapeHtml(api.cooldown_seconds ?? 0)}s</span>
               ${cooldownLabel(api) ? `<span class="badge fail">${escapeHtml(cooldownLabel(api))}</span>` : ""}
             </div>
-            ${api.last_error ? `<div class="api-url">Last error: ${escapeHtml(api.last_error)}</div>` : ""}
+            ${api.last_error ? `<div class="api-url">${currentLanguage() === "zh-CN" ? "最近错误" : "Last error"}: ${escapeHtml(api.last_error)}</div>` : ""}
           </div>
           <div class="api-actions">
-            <button data-action="test-api" data-id="${escapeHtml(api.id)}">Test</button>
-            <button data-action="toggle-api" data-id="${escapeHtml(api.id)}">${api.enabled ? "Disable" : "Enable"}</button>
-            <button data-action="edit-api" data-id="${escapeHtml(api.id)}">Edit</button>
-            <button class="danger" data-action="delete-api" data-id="${escapeHtml(api.id)}">Delete</button>
+            <button data-action="test-api" data-id="${escapeHtml(api.id)}">${t("test")}</button>
+            <button data-action="toggle-api" data-id="${escapeHtml(api.id)}">${api.enabled ? t("disabled") : t("enabled")}</button>
+            <button data-action="edit-api" data-id="${escapeHtml(api.id)}">${t("edit")}</button>
+            <button class="danger" data-action="delete-api" data-id="${escapeHtml(api.id)}">${t("delete")}</button>
           </div>
         </div>
       </article>
@@ -314,7 +604,8 @@ function parseJsonInput(id) {
 }
 
 function openApiDialog(api = null) {
-  $("apiDialogTitle").textContent = api ? "Edit API" : "Add API";
+  const defaultTimeoutSeconds = Number.parseInt(state.runtime_config?.default_timeout_seconds ?? 12, 10) || 12;
+  $("apiDialogTitle").textContent = api ? `${t("edit")} API` : t("addApi");
   $("apiId").value = api?.id || "";
   $("apiName").value = api?.name || "";
   $("apiGroup").innerHTML = state.groups.map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`).join("");
@@ -324,7 +615,7 @@ function openApiDialog(api = null) {
   $("apiQuery").value = JSON.stringify(api?.query || {}, null, 2);
   $("apiHeaders").value = JSON.stringify(api?.headers || {}, null, 2);
   $("apiBody").value = api?.body || "";
-  $("apiTimeoutSeconds").value = String(api?.timeout_seconds ?? 12);
+  $("apiTimeoutSeconds").value = String(api?.timeout_seconds ?? defaultTimeoutSeconds);
   $("apiRetryCount").value = String(api?.retry_count ?? 0);
   $("apiCooldownSeconds").value = String(api?.cooldown_seconds ?? 0);
   $("apiDescription").value = api?.description || "";
@@ -333,7 +624,7 @@ function openApiDialog(api = null) {
 }
 
 function openGroupDialog(group = null) {
-  $("groupDialogTitle").textContent = group ? "Edit Group" : "Add Group";
+  $("groupDialogTitle").textContent = group ? `${t("edit")} ${t("group")}` : `${t("add")} ${t("group")}`;
   $("groupId").value = group?.id || "";
   $("groupName").value = group?.name || "";
   $("groupDescription").value = group?.description || "";
@@ -341,7 +632,7 @@ function openGroupDialog(group = null) {
 }
 
 function openTriggerDialog(rule = null) {
-  $("triggerDialogTitle").textContent = rule ? "Edit Trigger" : "Add Trigger";
+  $("triggerDialogTitle").textContent = rule ? `${t("edit")} ${t("trigger")}` : t("addTrigger");
   $("triggerId").value = rule?.id || "";
   $("triggerPhrase").value = rule?.trigger || "";
   $("triggerMode").value = rule?.match_mode || "contains";
@@ -354,7 +645,7 @@ function openTriggerDialog(rule = null) {
   $("triggerPreviewApi").value = apiSelect.value;
   $("triggerResponseType").value = rule?.response_type || "summary";
   $("triggerResponsePath").value = rule?.response_path || "";
-  $("triggerResponsePreview").textContent = "No preview yet.";
+  $("triggerResponsePreview").textContent = t("noPreview");
   $("triggerEnabled").checked = rule?.enabled !== false;
   $("triggerStopEvent").checked = rule?.stop_event !== false;
   $("triggerDialog").showModal();
@@ -363,6 +654,7 @@ function openTriggerDialog(rule = null) {
 async function saveApi(event) {
   event.preventDefault();
   const id = $("apiId").value;
+  const defaultTimeoutSeconds = Number.parseInt(state.runtime_config?.default_timeout_seconds ?? 12, 10) || 12;
   const payload = {
     id,
     name: $("apiName").value,
@@ -372,7 +664,7 @@ async function saveApi(event) {
     query: parseJsonInput("apiQuery"),
     headers: parseJsonInput("apiHeaders"),
     body: $("apiBody").value,
-    timeout_seconds: parseNumberInput("apiTimeoutSeconds", 12, 1, 120),
+    timeout_seconds: parseNumberInput("apiTimeoutSeconds", defaultTimeoutSeconds, 1, 120),
     retry_count: parseNumberInput("apiRetryCount", 0, 0, 5),
     cooldown_seconds: parseNumberInput("apiCooldownSeconds", 0, 0, 3600),
     description: $("apiDescription").value,
@@ -628,5 +920,13 @@ $("importInput").addEventListener("change", async (event) => {
   }
 });
 
-log("Page handlers registered. Loading state...");
+await bridge().ready();
+applyTranslations();
+if (typeof window.AstrBotPluginPage?.onContext === "function") {
+  window.AstrBotPluginPage.onContext(() => {
+    applyTranslations();
+    render();
+  });
+}
+log(currentLanguage() === "zh-CN" ? "页面处理器已注册，正在加载状态..." : "Page handlers registered. Loading state...");
 refresh().catch((error) => log("Initialization failed", { message: error.message }));

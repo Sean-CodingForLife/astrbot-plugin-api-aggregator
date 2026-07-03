@@ -35,6 +35,20 @@ API Aggregator 是一个 AstrBot WebUI 插件，用于在插件页中集中管�
 - Python 运行环境由 AstrBot 提供
 - 无额外第三方 Python 依赖
 
+## 插件配置
+
+插件支持在 AstrBot 插件设置中调整以下配置：
+
+| 配置项 | 默认值 | 范围 | 说明 |
+| --- | --- | --- | --- |
+| `language_mode` | `auto` | `auto` / `zh-CN` / `en-US` | 语言模式；`auto` 下插件页跟随浏览器语言，后端触发器回复保持英文 |
+| `default_timeout_seconds` | `12` | `1-120` | 新增 API 时使用的默认请求超时时间；单个 API 仍可单独覆盖 |
+| `response_read_limit_bytes` | `4096` | `1-1048576` | 每次请求最多读取的上游响应字节数 |
+| `test_log_limit` | `100` | `1-1000` | 测试日志最多保留条数 |
+| `preview_max_chars` | `1200` | `1-10000` | 聚合摘要消息中响应预览的最大字符数 |
+
+语言和配置项文案使用 AstrBot 官方插件国际化目录 `.astrbot-plugin/i18n/`。当 `language_mode` 为 `auto` 时，插件页跟随 AstrBot WebUI 当前语言；触发器后端回复因没有 WebUI locale 上下文，会保持英文。
+
 ## 使用说明
 
 ### 1. 管理 API
@@ -58,7 +72,7 @@ API Aggregator 是一个 AstrBot WebUI 插件，用于在插件页中集中管�
 
 JSON 和文本响应会保存预览内容；二进制响应会保存大小和内容类型等元数据。
 
-可以在 AstrBot 插件设置中调整 `response_read_limit_bytes`。该值控制每次请求最多读取多少响应内容，默认 `4096`，允许范围 `1-1048576`。如果需要解析较大的 JSON 或字段较靠后的响应，可以适当调高；如果 API 可能返回大文件，建议保持较小值。
+可以在 AstrBot 插件设置中调整 `response_read_limit_bytes`。该值控制每次请求最多读取多少响应内容。如果需要解析较大的 JSON 或字段较靠后的响应，可以适当调高；如果 API 可能返回大文件，建议保持较小值。
 
 ### 2. 聚合调用
 
@@ -158,12 +172,18 @@ WebUI 的导入/导出功能使用同一份 JSON 数据结构。导入策略包�
 astrbot-plugin-api-aggregator/
 ├── main.py                  # 插件后端、Web API、触发器和 LLM 工具
 ├── metadata.yaml            # AstrBot 插件元数据
+├── _conf_schema.json        # AstrBot 插件设置 Schema
+├── .astrbot-plugin/
+│   └── i18n/
+│       ├── en-US.json       # 官方插件国际化资源
+│       └── zh-CN.json
 ├── pages/
 │   └── dashboard/
 │       ├── index.html       # 插件页 HTML
 │       ├── app.js           # 插件页交互逻辑
 │       └── style.css        # 插件页样式
 ├── README.md
+├── CHANGELOG.md
 ├── .gitignore
 └── .gitattributes
 ```

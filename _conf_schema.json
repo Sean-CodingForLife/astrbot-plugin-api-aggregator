@@ -1,8 +1,34 @@
 {
+  "language_mode": {
+    "description": "语言模式。",
+    "type": "string",
+    "hint": "auto 会让插件页按 AstrBot WebUI 当前语言显示；后端触发器回复在 auto 下保持英文。可选：auto、zh-CN、en-US。",
+    "options": ["auto", "zh-CN", "en-US"],
+    "labels": ["Auto", "中文", "English"],
+    "default": "auto"
+  },
+  "default_timeout_seconds": {
+    "description": "新增 API 时使用的默认请求超时时间（秒）。",
+    "type": "int",
+    "hint": "默认 12，范围 1-120。单个 API 仍可在插件页单独覆盖。",
+    "default": 12
+  },
   "response_read_limit_bytes": {
     "description": "上游 API 响应读取上限（字节）。提高后可解析更大的 JSON 响应，但会增加内存、日志和 WebUI 预览压力。",
     "type": "int",
-    "hint": "默认 4096，范围 1-1048576",
+    "hint": "默认 4096，范围 1-1048576。",
     "default": 4096
+  },
+  "test_log_limit": {
+    "description": "测试日志最多保留条数。",
+    "type": "int",
+    "hint": "默认 100，范围 1-1000。调高后会增加插件数据文件体积。",
+    "default": 100
+  },
+  "preview_max_chars": {
+    "description": "聚合摘要消息中响应预览的最大字符数。",
+    "type": "int",
+    "hint": "默认 1200，范围 1-10000。只影响摘要展示，不改变实际读取上限。",
+    "default": 1200
   }
 }
