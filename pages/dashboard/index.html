@@ -209,6 +209,25 @@
       <label>Method<select id="apiMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></label>
       <label>Query JSON<textarea id="apiQuery" spellcheck="false">{}</textarea></label>
       <label>Headers JSON<textarea id="apiHeaders" spellcheck="false">{}</textarea></label>
+      <fieldset class="auth-fields">
+        <legend data-i18n-key="authSettings">Auth Settings</legend>
+        <label>Auth Type<select id="apiAuthType"><option value="none">None</option><option value="bearer">Bearer Token</option><option value="api-key">API Key</option><option value="basic">Basic Auth</option><option value="cookie">Cookie</option></select></label>
+        <div class="auth-panel" data-auth-panel="bearer">
+          <label>Bearer Token<input id="apiBearerToken" type="password" autocomplete="off"></label>
+        </div>
+        <div class="auth-panel" data-auth-panel="api-key">
+          <label>API Key Name<input id="apiKeyName" autocomplete="off" placeholder="X-API-Key"></label>
+          <label>API Key Value<input id="apiKeyValue" type="password" autocomplete="off"></label>
+          <label>API Key Location<select id="apiKeyLocation"><option value="header">Header</option><option value="query">Query</option></select></label>
+        </div>
+        <div class="auth-panel" data-auth-panel="basic">
+          <label>Basic Username<input id="apiBasicUsername" autocomplete="username"></label>
+          <label>Basic Password<input id="apiBasicPassword" type="password" autocomplete="current-password"></label>
+        </div>
+        <div class="auth-panel" data-auth-panel="cookie">
+          <label>Cookie<textarea id="apiCookie" spellcheck="false" autocomplete="off"></textarea></label>
+        </div>
+      </fieldset>
       <label>Body<textarea id="apiBody" spellcheck="false"></textarea></label>
       <label>Timeout Seconds<input id="apiTimeoutSeconds" type="number" min="1" max="120" value="12"></label>
       <label>Retry Count<input id="apiRetryCount" type="number" min="0" max="5" value="0"></label>

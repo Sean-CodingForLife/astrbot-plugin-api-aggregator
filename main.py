@@ -31,6 +31,7 @@ DATA_VERSION = 1
 AGGREGATION_STRATEGIES = {"first-ok", "round-robin", "random"}
 TRIGGER_MATCH_MODES = {"contains", "exact", "command"}
 RESPONSE_TYPES = {"summary", "text", "image", "audio", "video"}
+AUTH_TYPES = {"none", "bearer", "api-key", "basic", "cookie"}
 LANGUAGE_MODES = {"auto", "zh-CN", "en-US"}
 DEFAULT_LANGUAGE_MODE = "auto"
 DEFAULT_TIMEOUT_SECONDS = 12
@@ -213,6 +214,7 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
                 "method": method,
                 "query": dict(item.get("query") or {}) if isinstance(item.get("query"), dict) else {},
                 "headers": dict(item.get("headers") or {}) if isinstance(item.get("headers"), dict) else {},
+                "auth": normalize_auth(item.get("auth")),
                 "body": str(item.get("body") or ""),
                 "enabled": bool(item.get("enabled", True)),
                 "description": str(item.get("description") or ""),
@@ -331,6 +333,47 @@ def pick_string_map(value: Any) -> dict[str, str]:
     return result
 
 
+def normalize_auth(value: Any) -> dict[str, str]:
+    auth = value if isinstance(value, dict) else {}
+    auth_type = str(auth.get("type") or "none").strip().lower()
+    if auth_type not in AUTH_TYPES:
+        auth_type = "none"
+    location = str(auth.get("api_key_location") or "header").strip().lower()
+    if location not in {"header", "query"}:
+        location = "header"
+    return {
+        "type": auth_type,
+        "bearer_token": str(auth.get("bearer_token") or ""),
+        "api_key_name": str(auth.get("api_key_name") or "X-API-Key").strip() or "X-API-Key",
+        "api_key_value": str(auth.get("api_key_value") or ""),
+        "api_key_location": location,
+        "basic_username": str(auth.get("basic_username") or ""),
+        "basic_password": str(auth.get("basic_password") or ""),
+        "cookie": str(auth.get("cookie") or ""),
+    }
+
+
+def apply_auth(api: dict[str, Any], headers: dict[str, str], query: dict[str, str]) -> None:
+    auth = normalize_auth(api.get("auth"))
+    auth_type = auth["type"]
+    if auth_type == "bearer" and auth["bearer_token"]:
+        headers["Authorization"] = f"Bearer {auth['bearer_token']}"
+    elif auth_type == "api-key" and auth["api_key_name"] and auth["api_key_value"]:
+        if auth["api_key_location"] == "query":
+            query[auth["api_key_name"]] = auth["api_key_value"]
+        else:
+            headers[auth["api_key_name"]] = auth["api_key_value"]
+    elif auth_type == "basic" and (auth["basic_username"] or auth["basic_password"]):
+        import base64
+
+        token = base64.b64encode(
+            f"{auth['basic_username']}:{auth['basic_password']}".encode("utf-8")
+        ).decode("ascii")
+        headers["Authorization"] = f"Basic {token}"
+    elif auth_type == "cookie" and auth["cookie"]:
+        headers["Cookie"] = auth["cookie"]
+
+
 def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
     base = dict(existing or {})
     name = str(payload.get("name", base.get("name", "")) or "").strip()
@@ -352,6 +395,7 @@ def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None =
         "method": method,
         "query": pick_string_map(payload.get("query", base.get("query", {}))),
         "headers": pick_string_map(payload.get("headers", base.get("headers", {}))),
+        "auth": normalize_auth(payload.get("auth", base.get("auth", {}))),
         "body": str(payload.get("body", base.get("body", "")) or ""),
         "enabled": bool(payload.get("enabled", base.get("enabled", True))),
         "description": str(payload.get("description", base.get("description", "")) or ""),
@@ -383,10 +427,11 @@ def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None =
 def build_request(api: dict[str, Any]) -> Request:
     url = str(api.get("url") or "").strip()
     query = pick_string_map(api.get("query"))
+    headers = pick_string_map(api.get("headers"))
+    apply_auth(api, headers, query)
     if query:
         separator = "&" if "?" in url else "?"
         url = f"{url}{separator}{urlencode(query)}"
-    headers = pick_string_map(api.get("headers"))
     method = str(api.get("method") or "GET").upper()
     body_text = str(api.get("body") or "")
     data = None

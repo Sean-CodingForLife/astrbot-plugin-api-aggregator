@@ -130,7 +130,23 @@
       "importMergeDescription": "按 id 将导入的分组、API 和触发器合并到当前数据。",
       "importValidateTitle": "校验",
       "importValidateDescription": "只检查 JSON 内容，不修改当前数据。",
-      "importOutputEmpty": "尚未执行导入或导出操作。"
+      "importOutputEmpty": "尚未执行导入或导出操作。",
+      "authSettings": "认证设置",
+      "authType": "认证类型",
+      "authNone": "无",
+      "authBearer": "Bearer Token",
+      "authApiKey": "API Key",
+      "authBasic": "Basic 认证",
+      "authCookie": "Cookie",
+      "bearerToken": "Bearer Token",
+      "apiKeyName": "API Key 名称",
+      "apiKeyValue": "API Key 值",
+      "apiKeyLocation": "API Key 位置",
+      "apiKeyHeader": "请求头",
+      "apiKeyQuery": "查询参数",
+      "basicUsername": "Basic 用户名",
+      "basicPassword": "Basic 密码",
+      "cookie": "Cookie"
     }
   }
 }
