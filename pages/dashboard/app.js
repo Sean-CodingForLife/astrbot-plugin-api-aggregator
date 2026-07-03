@@ -8,12 +8,21 @@ const state = {
   search: "",
 };
 const busyState = new Map();
+let languageOverride = null;
 
 const $ = (id) => document.getElementById(id);
 
 const I18N = {
   "en-US": {
+    title: "API operations console",
     appSubtitle: "Manage API entries, groups, enable state, tests, import, and export.",
+    apiInventoryDescription: "Grouped request entries with health, retry, and cooldown state.",
+    aggregatorDescription: "Run a group with the selected fallback strategy.",
+    aggregatePreview: "Aggregate preview",
+    triggerDescription: "Match chat input and route it into aggregate groups.",
+    logsDescription: "Last retained records from manual tests and aggregate calls.",
+    importExport: "Import and export",
+    importDescription: "Move API groups, entries, triggers, and runtime settings as JSON.",
     refresh: "Refresh",
     export: "Export",
     import: "Import",
@@ -99,7 +108,15 @@ const I18N = {
     value: "Value",
   },
   "zh-CN": {
+    title: "API 运行控制台",
     appSubtitle: "管理 API 条目、分组、启用状态、测试、导入和导出。",
+    apiInventoryDescription: "按分组查看请求条目、健康状态、重试和冷却时间。",
+    aggregatorDescription: "使用所选回退策略调用一个分组。",
+    aggregatePreview: "聚合预览",
+    triggerDescription: "匹配聊天输入，并路由到聚合分组。",
+    logsDescription: "保留手动测试和聚合调用的最近记录。",
+    importExport: "导入和导出",
+    importDescription: "以 JSON 迁移 API 分组、条目、触发器和运行设置。",
     refresh: "刷新",
     export: "导出",
     import: "导入",
@@ -187,6 +204,7 @@ const I18N = {
 };
 
 function currentLanguage() {
+  if (languageOverride === "zh-CN" || languageOverride === "en-US") return languageOverride;
   const mode = state.runtime_config?.language_mode || "auto";
   if (mode === "zh-CN" || mode === "en-US") return mode;
   const api = window.AstrBotPluginPage;
@@ -198,6 +216,7 @@ function t(key) {
   const language = currentLanguage();
   const fallback = I18N[language]?.[key] || I18N["en-US"][key] || key;
   const api = window.AstrBotPluginPage;
+  if (languageOverride) return fallback;
   return typeof api?.t === "function" ? api.t(`pages.dashboard.${key}`, fallback) : fallback;
 }
 
@@ -221,7 +240,12 @@ function setOptionText(selectId, value, key) {
 
 function applyTranslations() {
   document.documentElement.lang = currentLanguage();
-  setText(".topbar p", "appSubtitle");
+  document.querySelectorAll("[data-i18n-key]").forEach((element) => {
+    element.textContent = t(element.dataset.i18nKey);
+  });
+  document.querySelectorAll("[data-language-mode]").forEach((button) => {
+    button.classList.toggle("is-selected", button.dataset.languageMode === currentLanguage());
+  });
   setText("#refreshBtn", "refresh");
   setText("#exportBtn", "export");
   setOptionText("importStrategy", "replace", "importReplace");
@@ -229,23 +253,19 @@ function applyTranslations() {
   setOptionText("importStrategy", "validate", "importValidate");
   const importLabel = $("importInput")?.closest("label");
   if (importLabel?.firstChild) importLabel.firstChild.textContent = `${t("import")} `;
-  setText(".summary-grid .metric:nth-child(1) span", "totalApis");
-  setText(".summary-grid .metric:nth-child(2) span", "enabled");
-  setText(".summary-grid .metric:nth-child(3) span", "lastOk");
-  setText(".aggregate-panel h2", "aggregator");
+  setText(".metric-strip .metric:nth-child(1) span", "totalApis");
+  setText(".metric-strip .metric:nth-child(2) span", "enabled");
+  setText(".metric-strip .metric:nth-child(3) span", "lastOk");
   setOptionText("strategySelect", "first-ok", "firstOk");
   setOptionText("strategySelect", "round-robin", "roundRobin");
   setOptionText("strategySelect", "random", "random");
   setText("#saveSettingsBtn", "saveStrategy");
   setText("#callAggregateBtn", "callGroup");
-  setText(".trigger-panel h2", "messageTriggers");
   setText("#addTriggerBtn", "addTrigger");
-  setText(".groups-panel h2", "groups");
   setText("#addGroupBtn", "add");
   $("searchInput").placeholder = t("searchPlaceholder");
   setText("#testAllBtn", "testEnabled");
   setText("#addApiBtn", "addApi");
-  setText(".logs-panel h2", "testLogs");
   setText("#clearLogViewBtn", "clearView");
   if (["No aggregate call yet.", "尚未执行聚合调用。"].includes($("aggregateOutput").textContent.trim())) {
     $("aggregateOutput").textContent = t("noAggregate");
@@ -440,9 +460,12 @@ function filteredApis() {
 }
 
 function renderSummary() {
+  const enabledCount = state.apis.filter((api) => api.enabled).length;
   $("apiCount").textContent = String(state.apis.length);
-  $("enabledCount").textContent = String(state.apis.filter((api) => api.enabled).length);
+  $("enabledCount").textContent = String(enabledCount);
   $("okCount").textContent = String(state.apis.filter((api) => api.last_ok).length);
+  $("sidebarEnabledCount").textContent = `${enabledCount} / ${state.apis.length}`;
+  $("strategyMetric").textContent = state.settings?.strategy || "first-ok";
 }
 
 function renderGroups() {
@@ -814,6 +837,15 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function setView(view) {
+  document.querySelectorAll("[data-view]").forEach((panel) => {
+    panel.classList.toggle("is-hidden", panel.dataset.view !== view);
+  });
+  document.querySelectorAll("[data-view-target]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.viewTarget === view);
+  });
+}
+
 $("refreshBtn").addEventListener("click", () => refresh().catch((error) => log("Refresh failed", { message: error.message })));
 $("addApiBtn").addEventListener("click", () => openApiDialog());
 $("addGroupBtn").addEventListener("click", () => openGroupDialog());
@@ -918,6 +950,18 @@ $("importInput").addEventListener("change", async (event) => {
   } finally {
     event.target.value = "";
   }
+});
+
+document.querySelectorAll("[data-view-target]").forEach((button) => {
+  button.addEventListener("click", () => setView(button.dataset.viewTarget));
+});
+
+document.querySelectorAll("[data-language-mode]").forEach((button) => {
+  button.addEventListener("click", () => {
+    languageOverride = button.dataset.languageMode;
+    applyTranslations();
+    render();
+  });
 });
 
 await bridge().ready();

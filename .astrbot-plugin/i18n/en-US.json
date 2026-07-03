@@ -7,7 +7,11 @@
     "language_mode": {
       "description": "Language mode.",
       "hint": "auto follows the current AstrBot WebUI locale for the plugin page; backend trigger replies stay English in auto mode.",
-      "labels": ["Auto", "Chinese", "English"]
+      "labels": [
+        "Auto",
+        "Chinese",
+        "English"
+      ]
     },
     "default_timeout_seconds": {
       "description": "Default request timeout for newly created APIs, in seconds.",
@@ -28,7 +32,7 @@
   },
   "pages": {
     "dashboard": {
-      "title": "API Aggregator",
+      "title": "API operations console",
       "description": "Manage API entries, groups, enable state, tests, import, and export.",
       "appSubtitle": "Manage API entries, groups, enable state, tests, import, and export.",
       "refresh": "Refresh",
@@ -112,7 +116,14 @@
       "path": "Path",
       "matched": "Matched",
       "valueType": "Value type",
-      "value": "Value"
+      "value": "Value",
+      "apiInventoryDescription": "Grouped request entries with health, retry, and cooldown state.",
+      "aggregatorDescription": "Run a group with the selected fallback strategy.",
+      "aggregatePreview": "Aggregate preview",
+      "triggerDescription": "Match chat input and route it into aggregate groups.",
+      "logsDescription": "Last retained records from manual tests and aggregate calls.",
+      "importExport": "Import and export",
+      "importDescription": "Move API groups, entries, triggers, and runtime settings as JSON."
     }
   }
 }

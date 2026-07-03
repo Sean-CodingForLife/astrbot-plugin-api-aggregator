@@ -7,95 +7,178 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <h1>API Aggregator</h1>
-        <p>Manage API entries, groups, enable state, tests, import, and export.</p>
-      </div>
-      <div class="toolbar">
-        <button id="refreshBtn" type="button">Refresh</button>
-        <button id="exportBtn" type="button">Export</button>
-        <select id="importStrategy" title="Import strategy">
-          <option value="replace">Import: Replace</option>
-          <option value="merge">Import: Merge</option>
-          <option value="validate">Import: Validate</option>
-        </select>
-        <label class="import-btn">
-          Import
-          <input id="importInput" type="file" accept="application/json,.json">
-        </label>
-      </div>
-    </header>
-
-    <section class="summary-grid">
-      <div class="metric">
-        <span>Total APIs</span>
-        <strong id="apiCount">0</strong>
-      </div>
-      <div class="metric">
-        <span>Enabled</span>
-        <strong id="enabledCount">0</strong>
-      </div>
-      <div class="metric">
-        <span>Last OK</span>
-        <strong id="okCount">0</strong>
-      </div>
-    </section>
-
-    <section class="panel aggregate-panel">
-      <div class="section-head">
-        <h2>Aggregator</h2>
-        <div class="row">
-          <select id="aggregateGroup"></select>
-          <select id="strategySelect">
-            <option value="first-ok">First OK</option>
-            <option value="round-robin">Round Robin</option>
-            <option value="random">Random</option>
-          </select>
-          <button id="saveSettingsBtn" type="button">Save Strategy</button>
-          <button id="callAggregateBtn" type="button" class="primary">Call Group</button>
+  <main class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"></path><path d="M4 12h3M17 12h3M12 4v3M12 17v3"></path></svg>
+        </div>
+        <div>
+          <h1>API Aggregator</h1>
+          <p data-i18n-key="appSubtitle">AstrBot plugin</p>
         </div>
       </div>
-      <pre id="aggregateOutput">No aggregate call yet.</pre>
-    </section>
 
-    <section class="panel trigger-panel">
-      <div class="section-head">
-        <h2>Message Triggers</h2>
-        <button id="addTriggerBtn" type="button" class="primary">Add Trigger</button>
+      <nav class="nav-list" aria-label="Dashboard navigation">
+        <button class="nav-item is-active" type="button" data-view-target="apis">
+          <span class="nav-icon" aria-hidden="true">A</span>
+          <span data-i18n-key="apis">APIs</span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="triggers">
+          <span class="nav-icon" aria-hidden="true">T</span>
+          <span data-i18n-key="messageTriggers">Triggers</span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="logs">
+          <span class="nav-icon" aria-hidden="true">L</span>
+          <span data-i18n-key="testLogs">Logs</span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="import">
+          <span class="nav-icon" aria-hidden="true">I</span>
+          <span data-i18n-key="import">Import</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-card">
+        <span class="eyebrow" data-i18n-key="status">Status</span>
+        <strong id="sidebarEnabledCount">0</strong>
+        <p data-i18n-key="appSubtitle">Manage API entries, groups, enable state, tests, import, and export.</p>
       </div>
-      <div id="triggerList" class="trigger-list"></div>
-    </section>
+    </aside>
 
-    <section class="layout">
-      <aside class="panel groups-panel">
-        <div class="section-head">
-          <h2>Groups</h2>
-          <button id="addGroupBtn" type="button">Add</button>
+    <section class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="breadcrumb">Dashboard / API Aggregator</p>
+          <h2 data-i18n-key="title">API operations console</h2>
         </div>
-        <div id="groupList" class="group-list"></div>
-      </aside>
-
-      <section class="panel api-panel">
-        <div class="section-head">
-          <h2 id="apiPanelTitle">APIs</h2>
-          <div class="row">
+        <div class="topbar-actions">
+          <label class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3"></path><circle cx="11" cy="11" r="7"></circle></svg>
             <input id="searchInput" type="search" placeholder="Search name or URL">
-            <button id="testAllBtn" type="button">Test Enabled</button>
-            <button id="addApiBtn" type="button" class="primary">Add API</button>
+          </label>
+          <div class="language-switch" role="group" aria-label="Language">
+            <button type="button" data-language-mode="zh-CN">中文</button>
+            <button type="button" data-language-mode="en-US">EN</button>
           </div>
+          <button id="refreshBtn" class="icon-btn" type="button" title="Refresh" aria-label="Refresh">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.7 9.7 0 0 1-6.7-2.7"></path><path d="M3 12a9 9 0 0 1 9-9 9.7 9.7 0 0 1 6.7 2.7"></path><path d="M3 18v-5h5"></path><path d="M21 6v5h-5"></path></svg>
+          </button>
+          <button id="testAllBtn" class="secondary" type="button">Test Enabled</button>
+          <button id="addApiBtn" class="primary" type="button">Add API</button>
         </div>
-        <div id="apiList" class="api-list"></div>
-      </section>
-    </section>
+      </header>
 
-    <section class="panel logs-panel">
-      <div class="section-head">
-        <h2>Test Logs</h2>
-        <button id="clearLogViewBtn" type="button">Clear View</button>
-      </div>
-      <pre id="logOutput">Waiting for action...</pre>
+      <section class="metric-strip" aria-label="API metrics">
+        <article class="metric">
+          <span data-i18n-key="totalApis">Total APIs</span>
+          <strong id="apiCount">0</strong>
+        </article>
+        <article class="metric">
+          <span data-i18n-key="enabled">Enabled</span>
+          <strong id="enabledCount">0</strong>
+        </article>
+        <article class="metric">
+          <span data-i18n-key="lastOk">Last OK</span>
+          <strong id="okCount">0</strong>
+        </article>
+        <article class="metric accent">
+          <span data-i18n-key="strategy">Strategy</span>
+          <strong id="strategyMetric">first-ok</strong>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <section class="main-panel" data-view="apis">
+          <div class="panel-head">
+            <div>
+              <h3 id="apiPanelTitle" data-i18n-key="apis">APIs</h3>
+              <p data-i18n-key="apiInventoryDescription">Grouped request entries with health, retry, and cooldown state.</p>
+            </div>
+            <div class="panel-actions">
+              <button id="addGroupBtn" class="secondary" type="button">Add Group</button>
+            </div>
+          </div>
+          <div id="groupList" class="group-list"></div>
+          <div id="apiList" class="api-table"></div>
+        </section>
+
+        <aside class="detail-panel">
+          <div class="detail-head">
+            <span class="status-dot ok"></span>
+            <div>
+              <h3 data-i18n-key="aggregator">Aggregator</h3>
+              <p data-i18n-key="aggregatorDescription">Run a group with the selected fallback strategy.</p>
+            </div>
+          </div>
+          <div class="detail-list">
+            <label>
+              <span data-i18n-key="group">Group</span>
+              <select id="aggregateGroup"></select>
+            </label>
+            <label>
+              <span data-i18n-key="strategy">Strategy</span>
+              <select id="strategySelect">
+                <option value="first-ok">First OK</option>
+                <option value="round-robin">Round Robin</option>
+                <option value="random">Random</option>
+              </select>
+            </label>
+          </div>
+          <div class="response-card">
+            <div class="response-head">
+              <span data-i18n-key="aggregatePreview">Aggregate preview</span>
+              <button id="saveSettingsBtn" type="button">Save Strategy</button>
+            </div>
+            <pre id="aggregateOutput">No aggregate call yet.</pre>
+          </div>
+          <div class="action-stack">
+            <button id="callAggregateBtn" class="primary" type="button">Call Group</button>
+          </div>
+        </aside>
+
+        <section class="main-panel is-hidden" data-view="triggers">
+          <div class="panel-head">
+            <div>
+              <h3 data-i18n-key="messageTriggers">Message Triggers</h3>
+              <p data-i18n-key="triggerDescription">Match chat input and route it into aggregate groups.</p>
+            </div>
+            <button id="addTriggerBtn" class="primary" type="button">Add Trigger</button>
+          </div>
+          <div id="triggerList" class="trigger-list"></div>
+        </section>
+
+        <section class="main-panel is-hidden" data-view="logs">
+          <div class="panel-head">
+            <div>
+              <h3 data-i18n-key="testLogs">Test Logs</h3>
+              <p data-i18n-key="logsDescription">Last retained records from manual tests and aggregate calls.</p>
+            </div>
+            <button id="clearLogViewBtn" class="secondary" type="button">Clear View</button>
+          </div>
+          <pre id="logOutput" class="log-output">Waiting for action...</pre>
+        </section>
+
+        <section class="main-panel is-hidden" data-view="import">
+          <div class="panel-head">
+            <div>
+              <h3 data-i18n-key="importExport">Import and export</h3>
+              <p data-i18n-key="importDescription">Move API groups, entries, triggers, and runtime settings as JSON.</p>
+            </div>
+          </div>
+          <div class="import-layout">
+            <select id="importStrategy" title="Import strategy">
+              <option value="replace">Import: Replace</option>
+              <option value="merge">Import: Merge</option>
+              <option value="validate">Import: Validate</option>
+            </select>
+            <label class="secondary import-btn">
+              Import
+              <input id="importInput" type="file" accept="application/json,.json">
+            </label>
+            <button id="exportBtn" class="primary" type="button">Export</button>
+          </div>
+        </section>
+      </section>
     </section>
   </main>
 

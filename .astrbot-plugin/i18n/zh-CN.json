@@ -7,7 +7,11 @@
     "language_mode": {
       "description": "语言模式。",
       "hint": "auto 会让插件页按 AstrBot WebUI 当前语言显示；后端触发器回复在 auto 下保持英文。",
-      "labels": ["自动", "中文", "英文"]
+      "labels": [
+        "自动",
+        "中文",
+        "英文"
+      ]
     },
     "default_timeout_seconds": {
       "description": "新增 API 时使用的默认请求超时时间（秒）。",
@@ -28,7 +32,7 @@
   },
   "pages": {
     "dashboard": {
-      "title": "API 聚合器",
+      "title": "API 运行控制台",
       "description": "管理 API 条目、分组、启用状态、测试、导入和导出。",
       "appSubtitle": "管理 API 条目、分组、启用状态、测试、导入和导出。",
       "refresh": "刷新",
@@ -112,7 +116,14 @@
       "path": "路径",
       "matched": "匹配",
       "valueType": "值类型",
-      "value": "值"
+      "value": "值",
+      "apiInventoryDescription": "按分组查看请求条目、健康状态、重试和冷却时间。",
+      "aggregatorDescription": "使用所选回退策略调用一个分组。",
+      "aggregatePreview": "聚合预览",
+      "triggerDescription": "匹配聊天输入，并路由到聚合分组。",
+      "logsDescription": "保留手动测试和聚合调用的最近记录。",
+      "importExport": "导入和导出",
+      "importDescription": "以 JSON 迁移 API 分组、条目、触发器和运行设置。"
     }
   }
 }

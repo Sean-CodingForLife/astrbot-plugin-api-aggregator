@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Redesigned the official AstrBot plugin Page dashboard with a responsive operations-console layout while keeping the existing `window.AstrBotPluginPage` bridge integration and backend API actions.
+
 ### Added
 
 - Added AstrBot plugin configuration for default API timeout, response read limit, test log retention, and aggregate preview length.
