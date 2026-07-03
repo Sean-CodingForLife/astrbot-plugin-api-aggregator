@@ -1,0 +1,1502 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import random
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from pydantic import Field as PydanticField
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent, filter
+import astrbot.api.message_components as Comp
+from astrbot.api.star import Context, Star, register
+from astrbot.api.web import error_response, json_response, request
+from astrbot.core.agent.run_context import ContextWrapper
+from astrbot.core.agent.tool import FunctionTool, ToolExecResult
+from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
+
+
+PLUGIN_NAME = "astrbot_plugin_api_aggregator"
+VERSION = "0.2.0"
+DATA_VERSION = 1
+AGGREGATION_STRATEGIES = {"first-ok", "round-robin", "random"}
+TRIGGER_MATCH_MODES = {"contains", "exact", "command"}
+RESPONSE_TYPES = {"summary", "text", "image", "audio", "video"}
+DEFAULT_TIMEOUT_SECONDS = 12
+MAX_TIMEOUT_SECONDS = 120
+MAX_RETRY_COUNT = 5
+MAX_COOLDOWN_SECONDS = 3600
+
+
+@dataclass
+class ApiAggregatorStore:
+    root: Path
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    @property
+    def data_dir(self) -> Path:
+        return self.root
+
+    @property
+    def data_path(self) -> Path:
+        return self.root / "api_aggregator.json"
+
+    def default_data(self) -> dict[str, Any]:
+        return {
+            "version": DATA_VERSION,
+            "groups": [
+                {
+                    "id": "default",
+                    "name": "Default",
+                    "description": "Default API group",
+                    "created_at": now_ms(),
+                    "updated_at": now_ms(),
+                }
+            ],
+            "apis": [],
+            "test_logs": [],
+            "settings": {
+                "strategy": "first-ok",
+                "cursors": {},
+                "triggers": [],
+            },
+        }
+
+    async def read(self) -> dict[str, Any]:
+        async with self.lock:
+            return self._read_unlocked()
+
+    async def write(self, data: dict[str, Any]) -> dict[str, Any]:
+        async with self.lock:
+            normalized = normalize_data(data)
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self.data_path.with_suffix(".json.tmp")
+            tmp.write_text(
+                json.dumps(normalized, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            tmp.replace(self.data_path)
+            return normalized
+
+    async def mutate(self, fn):
+        async with self.lock:
+            data = self._read_unlocked()
+            result = fn(data)
+            normalized = normalize_data(data)
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self.data_path.with_suffix(".json.tmp")
+            tmp.write_text(
+                json.dumps(normalized, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            tmp.replace(self.data_path)
+            return result, normalized
+
+    def _read_unlocked(self) -> dict[str, Any]:
+        if not self.data_path.exists():
+            return self.default_data()
+        try:
+            raw = json.loads(self.data_path.read_text(encoding="utf-8"))
+        except Exception:
+            return self.default_data()
+        return normalize_data(raw)
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
+    data = raw if isinstance(raw, dict) else {}
+    groups = data.get("groups") if isinstance(data.get("groups"), list) else []
+    apis = data.get("apis") if isinstance(data.get("apis"), list) else []
+    logs = data.get("test_logs") if isinstance(data.get("test_logs"), list) else []
+    settings = data.get("settings") if isinstance(data.get("settings"), dict) else {}
+
+    cleaned_groups: list[dict[str, Any]] = []
+    seen_groups: set[str] = set()
+    for item in groups:
+        if not isinstance(item, dict):
+            continue
+        group_id = str(item.get("id") or "").strip() or new_id("group")
+        if group_id in seen_groups:
+            continue
+        seen_groups.add(group_id)
+        name = str(item.get("name") or "").strip() or "Untitled Group"
+        cleaned_groups.append(
+            {
+                "id": group_id,
+                "name": name,
+                "description": str(item.get("description") or ""),
+                "created_at": int(item.get("created_at") or now_ms()),
+                "updated_at": int(item.get("updated_at") or now_ms()),
+            }
+        )
+    if not cleaned_groups:
+        cleaned_groups.append(
+            {
+                "id": "default",
+                "name": "Default",
+                "description": "Default API group",
+                "created_at": now_ms(),
+                "updated_at": now_ms(),
+            }
+        )
+
+    group_ids = {item["id"] for item in cleaned_groups}
+    default_group = cleaned_groups[0]["id"]
+    cleaned_apis: list[dict[str, Any]] = []
+    seen_apis: set[str] = set()
+    for item in apis:
+        if not isinstance(item, dict):
+            continue
+        api_id = str(item.get("id") or "").strip() or new_id("api")
+        if api_id in seen_apis:
+            continue
+        seen_apis.add(api_id)
+        name = str(item.get("name") or "").strip() or "Untitled API"
+        method = str(item.get("method") or "GET").strip().upper()
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+            method = "GET"
+        group_id = str(item.get("group_id") or default_group).strip()
+        if group_id not in group_ids:
+            group_id = default_group
+        cleaned_apis.append(
+            {
+                "id": api_id,
+                "name": name,
+                "group_id": group_id,
+                "url": str(item.get("url") or "").strip(),
+                "method": method,
+                "query": dict(item.get("query") or {}) if isinstance(item.get("query"), dict) else {},
+                "headers": dict(item.get("headers") or {}) if isinstance(item.get("headers"), dict) else {},
+                "body": str(item.get("body") or ""),
+                "enabled": bool(item.get("enabled", True)),
+                "description": str(item.get("description") or ""),
+                "timeout_seconds": clamp_int(
+                    item.get("timeout_seconds"),
+                    DEFAULT_TIMEOUT_SECONDS,
+                    1,
+                    MAX_TIMEOUT_SECONDS,
+                ),
+                "retry_count": clamp_int(
+                    item.get("retry_count"),
+                    0,
+                    0,
+                    MAX_RETRY_COUNT,
+                ),
+                "cooldown_seconds": clamp_int(
+                    item.get("cooldown_seconds"),
+                    0,
+                    0,
+                    MAX_COOLDOWN_SECONDS,
+                ),
+                "cooldown_until": max(0, int(item.get("cooldown_until") or 0)),
+                "last_error": str(item.get("last_error") or ""),
+                "last_status": item.get("last_status"),
+                "last_ok": bool(item.get("last_ok", False)),
+                "last_tested_at": item.get("last_tested_at"),
+                "last_preview": str(item.get("last_preview") or ""),
+                "created_at": int(item.get("created_at") or now_ms()),
+                "updated_at": int(item.get("updated_at") or now_ms()),
+            }
+        )
+
+    cleaned_logs = [item for item in logs if isinstance(item, dict)][-100:]
+    strategy = str(settings.get("strategy") or "first-ok")
+    if strategy not in AGGREGATION_STRATEGIES:
+        strategy = "first-ok"
+    cursors = settings.get("cursors") if isinstance(settings.get("cursors"), dict) else {}
+    cleaned_cursors: dict[str, int] = {}
+    for key, value in cursors.items():
+        try:
+            cleaned_cursors[str(key)] = max(0, int(value))
+        except (TypeError, ValueError):
+            continue
+    triggers = settings.get("triggers") if isinstance(settings.get("triggers"), list) else []
+    cleaned_triggers: list[dict[str, Any]] = []
+    seen_triggers: set[str] = set()
+    for item in triggers:
+        if not isinstance(item, dict):
+            continue
+        trigger_id = str(item.get("id") or "").strip() or new_id("trigger")
+        if trigger_id in seen_triggers:
+            continue
+        seen_triggers.add(trigger_id)
+        phrase = str(item.get("trigger") or "").strip()
+        if not phrase:
+            continue
+        mode = str(item.get("match_mode") or "contains").strip()
+        if mode not in TRIGGER_MATCH_MODES:
+            mode = "contains"
+        strategy = str(item.get("strategy") or "first-ok").strip()
+        if strategy not in AGGREGATION_STRATEGIES:
+            strategy = "first-ok"
+        cleaned_triggers.append(
+            {
+                "id": trigger_id,
+                "enabled": bool(item.get("enabled", True)),
+                "trigger": phrase,
+                "match_mode": mode,
+                "group_id": str(item.get("group_id") or "all").strip() or "all",
+                "strategy": strategy,
+                "preview_api_id": str(item.get("preview_api_id") or "").strip(),
+                "stop_event": bool(item.get("stop_event", True)),
+                "response_type": str(item.get("response_type") or "summary")
+                if str(item.get("response_type") or "summary") in RESPONSE_TYPES
+                else "summary",
+                "response_path": str(item.get("response_path") or "").strip(),
+                "created_at": int(item.get("created_at") or now_ms()),
+                "updated_at": int(item.get("updated_at") or now_ms()),
+            }
+        )
+    return {
+        "version": DATA_VERSION,
+        "groups": cleaned_groups,
+        "apis": cleaned_apis,
+        "test_logs": cleaned_logs,
+        "settings": {
+            "strategy": strategy,
+            "cursors": cleaned_cursors,
+            "triggers": cleaned_triggers,
+        },
+    }
+
+
+async def read_json_body() -> dict[str, Any]:
+    data = await request.json(default={})
+    return data if isinstance(data, dict) else {}
+
+
+def ok(data: Any = None):
+    return json_response(data if data is not None else {})
+
+
+def fail(message: str, status: int = 400):
+    return error_response(message, status_code=status)
+
+
+def pick_string_map(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        k = str(key).strip()
+        if not k:
+            continue
+        result[k] = str(item)
+    return result
+
+
+def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    base = dict(existing or {})
+    name = str(payload.get("name", base.get("name", "")) or "").strip()
+    url = str(payload.get("url", base.get("url", "")) or "").strip()
+    if not name:
+        raise ValueError("API name is required")
+    if not url:
+        raise ValueError("API URL is required")
+    method = str(payload.get("method", base.get("method", "GET")) or "GET").upper()
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        raise ValueError("method must be GET, POST, PUT, PATCH, or DELETE")
+    ts = now_ms()
+    return {
+        **base,
+        "id": str(base.get("id") or payload.get("id") or new_id("api")),
+        "name": name,
+        "group_id": str(payload.get("group_id", base.get("group_id", "default")) or "default"),
+        "url": url,
+        "method": method,
+        "query": pick_string_map(payload.get("query", base.get("query", {}))),
+        "headers": pick_string_map(payload.get("headers", base.get("headers", {}))),
+        "body": str(payload.get("body", base.get("body", "")) or ""),
+        "enabled": bool(payload.get("enabled", base.get("enabled", True))),
+        "description": str(payload.get("description", base.get("description", "")) or ""),
+        "timeout_seconds": clamp_int(
+            payload.get("timeout_seconds", base.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)),
+            DEFAULT_TIMEOUT_SECONDS,
+            1,
+            MAX_TIMEOUT_SECONDS,
+        ),
+        "retry_count": clamp_int(
+            payload.get("retry_count", base.get("retry_count", 0)),
+            0,
+            0,
+            MAX_RETRY_COUNT,
+        ),
+        "cooldown_seconds": clamp_int(
+            payload.get("cooldown_seconds", base.get("cooldown_seconds", 0)),
+            0,
+            0,
+            MAX_COOLDOWN_SECONDS,
+        ),
+        "cooldown_until": max(0, int(base.get("cooldown_until") or 0)),
+        "last_error": str(base.get("last_error") or ""),
+        "created_at": int(base.get("created_at") or ts),
+        "updated_at": ts,
+    }
+
+
+def build_request(api: dict[str, Any]) -> Request:
+    url = str(api.get("url") or "").strip()
+    query = pick_string_map(api.get("query"))
+    if query:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}{urlencode(query)}"
+    headers = pick_string_map(api.get("headers"))
+    method = str(api.get("method") or "GET").upper()
+    body_text = str(api.get("body") or "")
+    data = None
+    if method in {"POST", "PUT", "PATCH", "DELETE"}:
+        data = body_text.encode("utf-8") if body_text else b""
+        headers.setdefault("Content-Type", "application/json; charset=utf-8")
+    return Request(url, data=data, headers=headers, method=method)
+
+
+def _cooldown_remaining_ms(api: dict[str, Any]) -> int:
+    cooldown_until = max(0, int(api.get("cooldown_until") or 0))
+    return max(0, cooldown_until - now_ms())
+
+
+def _build_attempt_result(
+    api: dict[str, Any],
+    *,
+    ok_flag: bool,
+    elapsed_ms: int,
+    status: int | None,
+    content_type: str,
+    body_kind: str,
+    body_data: Any,
+    preview: str,
+    error: str,
+    error_type: str,
+    attempt: int,
+) -> dict[str, Any]:
+    return {
+        "api_id": api["id"],
+        "api_name": api["name"],
+        "ok": ok_flag,
+        "elapsed_ms": elapsed_ms,
+        "status": status,
+        "content_type": content_type,
+        "body_kind": body_kind,
+        "body_data": body_data,
+        "preview": preview,
+        "error": error,
+        "error_type": error_type,
+        "attempt": attempt,
+        "tested_at": now_ms(),
+    }
+
+
+def classify_request_error(exc: Exception) -> str:
+    if isinstance(exc, HTTPError):
+        return "http_error"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, URLError):
+        reason = str(getattr(exc, "reason", "") or exc)
+        lowered = reason.lower()
+        if "timed out" in lowered or "timeout" in lowered:
+            return "timeout"
+        if "ssl" in lowered or "handshake" in lowered:
+            return "ssl_error"
+        if "name or service not known" in lowered or "could not resolve" in lowered:
+            return "dns_error"
+        return "connection_error"
+    lowered = str(exc).lower()
+    if "timed out" in lowered or "timeout" in lowered:
+        return "timeout"
+    if "ssl" in lowered or "handshake" in lowered:
+        return "ssl_error"
+    if "could not resolve" in lowered or "remote name could not be resolved" in lowered:
+        return "dns_error"
+    return "request_error"
+
+
+def normalize_content_type(value: Any) -> str:
+    return str(value or "").split(";", 1)[0].strip().lower()
+
+
+def classify_response_body(content_type: str) -> str:
+    normalized = normalize_content_type(content_type)
+    if normalized == "application/json" or normalized.endswith("+json"):
+        return "json"
+    if normalized.startswith("text/") or normalized in {
+        "application/xml",
+        "text/xml",
+        "application/javascript",
+        "application/x-www-form-urlencoded",
+    }:
+        return "text"
+    return "binary"
+
+
+def build_response_payload(content_type: str, raw: bytes) -> dict[str, Any]:
+    body_kind = classify_response_body(content_type)
+    if body_kind == "json":
+        text = raw.decode("utf-8", errors="replace")
+        try:
+            data = json.loads(text)
+            preview = text[:1000]
+        except json.JSONDecodeError:
+            body_kind = "text"
+            data = text
+            preview = text[:1000]
+        else:
+            return {
+                "body_kind": body_kind,
+                "body_data": data,
+                "preview": preview,
+            }
+    if body_kind == "text":
+        text = raw.decode("utf-8", errors="replace")
+        return {
+            "body_kind": body_kind,
+            "body_data": text,
+            "preview": text[:1000],
+        }
+    return {
+        "body_kind": "binary",
+        "body_data": {
+            "size": len(raw),
+            "content_type": normalize_content_type(content_type) or "application/octet-stream",
+        },
+        "preview": f"<binary:{normalize_content_type(content_type) or 'application/octet-stream'} size={len(raw)}>",
+    }
+
+
+async def execute_api_request(api: dict[str, Any], *, ignore_cooldown: bool = False) -> dict[str, Any]:
+    cooldown_remaining_ms = _cooldown_remaining_ms(api)
+    if cooldown_remaining_ms > 0 and not ignore_cooldown:
+        return {
+            "api_id": api["id"],
+            "api_name": api["name"],
+            "ok": False,
+            "elapsed_ms": 0,
+            "status": None,
+            "content_type": "",
+            "body_kind": "",
+            "body_data": None,
+            "preview": "",
+            "error": f"API is in cooldown for {cooldown_remaining_ms} ms",
+            "error_type": "cooldown",
+            "tested_at": now_ms(),
+            "attempts": [],
+            "attempt_count": 0,
+            "cooldown_skipped": True,
+            "cooldown_remaining_ms": cooldown_remaining_ms,
+        }
+
+    timeout_seconds = clamp_int(
+        api.get("timeout_seconds"),
+        DEFAULT_TIMEOUT_SECONDS,
+        1,
+        MAX_TIMEOUT_SECONDS,
+    )
+    retry_count = clamp_int(api.get("retry_count"), 0, 0, MAX_RETRY_COUNT)
+    attempts: list[dict[str, Any]] = []
+
+    def run_once() -> dict[str, Any]:
+        req = build_request(api)
+        with urlopen(req, timeout=timeout_seconds) as response:
+            raw = response.read(4096)
+            content_type = str(response.headers.get("Content-Type", "") or "")
+            payload = build_response_payload(content_type, raw)
+            return {
+                "status": getattr(response, "status", None),
+                "content_type": content_type,
+                "body_kind": payload["body_kind"],
+                "body_data": payload["body_data"],
+                "preview": payload["preview"],
+            }
+
+    for attempt in range(1, retry_count + 2):
+        started = time.perf_counter()
+        try:
+            result = await asyncio.to_thread(run_once)
+            elapsed = int((time.perf_counter() - started) * 1000)
+            attempts.append(
+                _build_attempt_result(
+                    api,
+                    ok_flag=True,
+                    elapsed_ms=elapsed,
+                    status=result.get("status"),
+                    content_type=str(result.get("content_type") or ""),
+                    body_kind=str(result.get("body_kind") or ""),
+                    body_data=result.get("body_data"),
+                    preview=str(result.get("preview") or ""),
+                    error="",
+                    error_type="",
+                    attempt=attempt,
+                )
+            )
+            break
+        except Exception as exc:
+            elapsed = int((time.perf_counter() - started) * 1000)
+            attempts.append(
+                _build_attempt_result(
+                    api,
+                    ok_flag=False,
+                    elapsed_ms=elapsed,
+                    status=None,
+                    content_type="",
+                    body_kind="",
+                    body_data=None,
+                    preview="",
+                    error=str(exc),
+                    error_type=classify_request_error(exc),
+                    attempt=attempt,
+                )
+            )
+
+    final_attempt = attempts[-1]
+    return {
+        **final_attempt,
+        "attempts": attempts,
+        "attempt_count": len(attempts),
+        "cooldown_skipped": False,
+        "cooldown_remaining_ms": 0,
+    }
+
+
+def enabled_apis_for_group(data: dict[str, Any], group_id: str) -> list[dict[str, Any]]:
+    apis = [api for api in data["apis"] if api.get("enabled")]
+    if group_id != "all":
+        apis = [api for api in apis if api.get("group_id") == group_id]
+    return apis
+
+
+def resolve_group_name(data: dict[str, Any], group_name: str) -> tuple[str | None, str | None]:
+    group_name = group_name.strip()
+    if not group_name or group_name == "all":
+        return "all", None
+    matches = [
+        group
+        for group in data.get("groups", [])
+        if str(group.get("name") or "").strip() == group_name
+    ]
+    if not matches:
+        return None, f"group not found: {group_name}"
+    if len(matches) > 1:
+        return None, f"group name is duplicated: {group_name}"
+    return str(matches[0].get("id") or ""), None
+
+
+def group_name_exists(data: dict[str, Any], name: str, *, exclude_id: str = "") -> bool:
+    normalized = name.strip()
+    return any(
+        str(group.get("id") or "") != exclude_id
+        and str(group.get("name") or "").strip() == normalized
+        for group in data.get("groups", [])
+    )
+
+
+def ordered_candidates(data: dict[str, Any], group_id: str, strategy: str) -> tuple[list[dict[str, Any]], int | None]:
+    candidates = enabled_apis_for_group(data, group_id)
+    if not candidates:
+        return [], None
+    if strategy == "random":
+        shuffled = list(candidates)
+        random.shuffle(shuffled)
+        return shuffled, None
+    if strategy == "round-robin":
+        cursors = data.get("settings", {}).get("cursors", {})
+        cursor = int(cursors.get(group_id, 0)) if isinstance(cursors, dict) else 0
+        start = cursor % len(candidates)
+        return candidates[start:] + candidates[:start], start
+    return candidates, None
+
+
+def record_test_result(data: dict[str, Any], result: dict[str, Any]) -> None:
+    api_id = result.get("api_id")
+    for item in data["apis"]:
+        if item["id"] == api_id:
+            item["last_status"] = result.get("status")
+            item["last_ok"] = bool(result.get("ok"))
+            item["last_tested_at"] = result["tested_at"]
+            item["last_preview"] = result.get("preview") or result.get("error") or ""
+            item["last_error"] = str(result.get("error") or "")
+            cooldown_seconds = clamp_int(
+                item.get("cooldown_seconds"),
+                0,
+                0,
+                MAX_COOLDOWN_SECONDS,
+            )
+            item["cooldown_until"] = (
+                result["tested_at"] + cooldown_seconds * 1000
+                if cooldown_seconds > 0 and not result.get("ok")
+                else 0
+            )
+            item["updated_at"] = now_ms()
+            break
+    data["test_logs"].append(result)
+    data["test_logs"] = data["test_logs"][-100:]
+
+
+def trigger_matches(rule: dict[str, Any], message: str) -> bool:
+    trigger = str(rule.get("trigger") or "").strip()
+    mode = str(rule.get("match_mode") or "contains")
+    message = message.strip()
+    if not trigger:
+        return False
+    if mode == "exact":
+        return message == trigger
+    if mode == "command":
+        return message.split(maxsplit=1)[0] == trigger
+    return trigger in message
+
+
+def format_aggregate_reply(result: dict[str, Any]) -> str:
+    selected = result.get("selected") if isinstance(result.get("selected"), dict) else None
+    attempts = result.get("attempts") if isinstance(result.get("attempts"), list) else []
+    if not selected:
+        errors = [
+            f"{item.get('api_name')}: {item.get('error_type') or 'request_error'} ({item.get('error')})"
+            for item in attempts[-3:]
+            if isinstance(item, dict)
+        ]
+        detail = "\n".join(errors)
+        return "\n".join(
+            [
+                f"API Aggregator: all {len(attempts)} attempt(s) failed.",
+                detail,
+            ]
+        ).strip()
+    preview = str(selected.get("preview") or "").strip()
+    if len(preview) > 1200:
+        preview = preview[:1200] + "..."
+    return "\n".join(
+        [
+            f"API Aggregator: {selected.get('api_name')} OK",
+            f"Status: {selected.get('status')}",
+            f"Elapsed: {selected.get('elapsed_ms')} ms",
+            preview,
+        ]
+    ).strip()
+
+
+def extract_path(source: Any, path: str) -> Any:
+    current = source
+    for part in [item for item in path.replace("[", ".").replace("]", "").split(".") if item]:
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return current
+
+
+def selected_body(result: dict[str, Any]) -> Any:
+    selected = result.get("selected") if isinstance(result.get("selected"), dict) else {}
+    body_kind = str(selected.get("body_kind") or "")
+    body_data = selected.get("body_data")
+    if body_kind == "json":
+        return body_data
+    if body_kind == "text":
+        return str(body_data or "")
+    return body_data
+
+
+def response_value(result: dict[str, Any], path: str) -> Any:
+    source = selected_body(result)
+    if not path:
+        return source
+    selected = result.get("selected") if isinstance(result.get("selected"), dict) else {}
+    if str(selected.get("body_kind") or "") != "json":
+        return None
+    return extract_path(source, path)
+
+
+def preview_response_path(result: dict[str, Any], path: str) -> dict[str, Any]:
+    value = response_value(result, path)
+    matched = path == "" or value is not None
+    selected = result.get("selected") if isinstance(result.get("selected"), dict) else {}
+    source = selected_body(result)
+    source_type = type(source).__name__
+    body_kind = str(selected.get("body_kind") or "")
+    if path and body_kind != "json":
+        message = (
+            f"Path extraction only supports JSON responses. Current body kind: {body_kind or 'unknown'}."
+        )
+    else:
+        message = (
+            "Path matched response data."
+            if matched
+            else f"Path did not match the latest {source_type} payload."
+        )
+    return {
+        "matched": matched,
+        "path": path,
+        "value": value,
+        "value_type": type(value).__name__ if value is not None else "null",
+        "source_type": source_type,
+        "body_kind": body_kind,
+        "content_type": selected.get("content_type") or "",
+        "message": message,
+    }
+
+
+def format_missing_url_reply(media_type: str, path: str, result: dict[str, Any]) -> str:
+    selected = result.get("selected") if isinstance(result.get("selected"), dict) else {}
+    value = response_value(result, path)
+    value_type = type(value).__name__ if value is not None else "null"
+    content_type = str(selected.get("content_type") or "")
+    preview = str(selected.get("preview") or "").strip()
+    if len(preview) > 300:
+        preview = preview[:300] + "..."
+    return "\n".join(
+        [
+            f"API Aggregator: {media_type} URL not found at {path or '<root>'}.",
+            f"Extracted value type: {value_type}",
+            f"Content-Type: {content_type or '<empty>'}",
+            f"Preview: {preview or '<empty>'}",
+        ]
+    )
+
+
+def validate_import_payload(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("import data must be a JSON object")
+    if "groups" in raw and not isinstance(raw.get("groups"), list):
+        raise ValueError("groups must be a list")
+    if "apis" in raw and not isinstance(raw.get("apis"), list):
+        raise ValueError("apis must be a list")
+    settings = raw.get("settings")
+    if settings is not None and not isinstance(settings, dict):
+        raise ValueError("settings must be an object")
+    if isinstance(settings, dict) and "triggers" in settings and not isinstance(settings.get("triggers"), list):
+        raise ValueError("settings.triggers must be a list")
+    return normalize_data(raw)
+
+
+def merge_import_data(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    current_groups = {
+        str(item.get("id") or "").strip(): dict(item)
+        for item in current.get("groups", [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    incoming_groups = [
+        dict(item)
+        for item in incoming.get("groups", [])
+        if isinstance(item, dict)
+    ]
+    for group in incoming_groups:
+        group_id = str(group.get("id") or "").strip()
+        if group_id:
+            current_groups[group_id] = group
+
+    current_apis = {
+        str(item.get("id") or "").strip(): dict(item)
+        for item in current.get("apis", [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    incoming_apis = [
+        dict(item)
+        for item in incoming.get("apis", [])
+        if isinstance(item, dict)
+    ]
+    for api in incoming_apis:
+        api_id = str(api.get("id") or "").strip()
+        if api_id:
+            current_apis[api_id] = api
+
+    merged_settings = dict(current.get("settings", {}))
+    incoming_settings = dict(incoming.get("settings", {}))
+    if "strategy" in incoming_settings:
+        merged_settings["strategy"] = incoming_settings["strategy"]
+    merged_cursors = dict(current.get("settings", {}).get("cursors", {}))
+    merged_cursors.update(dict(incoming_settings.get("cursors", {})))
+    merged_settings["cursors"] = merged_cursors
+
+    current_triggers = {
+        str(item.get("id") or "").strip(): dict(item)
+        for item in current.get("settings", {}).get("triggers", [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    incoming_triggers = [
+        dict(item)
+        for item in incoming_settings.get("triggers", [])
+        if isinstance(item, dict)
+    ]
+    for trigger in incoming_triggers:
+        trigger_id = str(trigger.get("id") or "").strip()
+        if trigger_id:
+            current_triggers[trigger_id] = trigger
+    merged_settings["triggers"] = list(current_triggers.values())
+
+    return normalize_data(
+        {
+            "version": DATA_VERSION,
+            "groups": list(current_groups.values()),
+            "apis": list(current_apis.values()),
+            "test_logs": list(current.get("test_logs", [])),
+            "settings": merged_settings,
+        }
+    )
+
+
+@pydantic_dataclass
+class ApiAggregatorCallTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = PydanticField(default=None, repr=False)
+    name: str = "api_aggregator_call"
+    description: str = "Call an enabled API group managed by API Aggregator and return the selected API result."
+    parameters: dict[str, Any] = PydanticField(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "group": {
+                    "type": "string",
+                    "description": "Visible API group name to call. Use all to call all enabled APIs.",
+                    "default": "all",
+                },
+                "strategy": {
+                    "type": "string",
+                    "description": "Aggregation strategy.",
+                    "enum": ["first-ok", "round-robin", "random"],
+                    "default": "first-ok",
+                },
+                "response_path": {
+                    "type": "string",
+                    "description": "Optional dot path to extract from the selected JSON response, for example data.link.",
+                    "default": "",
+                },
+            },
+            "required": [],
+        }
+    )
+
+    async def call(
+        self,
+        context: ContextWrapper[AstrAgentContext],
+        **kwargs: Any,
+    ) -> ToolExecResult:
+        _ = context
+        if self.plugin is None:
+            return json.dumps(
+                {"ok": False, "error": "API Aggregator plugin is unavailable"},
+                ensure_ascii=False,
+            )
+
+        group_name = str(kwargs.get("group") or "all").strip() or "all"
+        strategy = str(kwargs.get("strategy") or "first-ok").strip()
+        response_path = str(kwargs.get("response_path") or "").strip()
+        result, state_or_error, status = await self.plugin.run_aggregate_by_group_name(
+            group_name,
+            strategy,
+        )
+        if status != 200 or not isinstance(result, dict):
+            return json.dumps(
+                {
+                    "ok": False,
+                    "group": group_name,
+                    "strategy": strategy,
+                    "error": str(state_or_error),
+                },
+                ensure_ascii=False,
+            )
+
+        value = None
+        if result.get("ok"):
+            value = response_value(result, response_path)
+        return json.dumps(
+            {
+                "ok": bool(result.get("ok")),
+                "group": group_name,
+                "strategy": strategy,
+                "response_path": response_path,
+                "value": value,
+                "selected": result.get("selected"),
+                "failure_reason": result.get("failure_reason") or "",
+                "attempts": result.get("attempts") or [],
+            },
+            ensure_ascii=False,
+        )
+
+
+@register(
+    PLUGIN_NAME,
+    "OpenAI",
+    "Clean AstrBot WebUI plugin for managing and testing aggregated APIs.",
+    VERSION,
+    "",
+)
+class ApiAggregatorPlugin(Star):
+    def __init__(self, context: Context, config: dict | None = None) -> None:
+        super().__init__(context)
+        self.context = context
+        self.config = config or {}
+        self.root = Path(__file__).resolve().parent
+        self.store = ApiAggregatorStore(Path(get_astrbot_plugin_data_path()) / PLUGIN_NAME)
+        self._registered = False
+        self._register_web_apis()
+        self.context.add_llm_tools(ApiAggregatorCallTool(plugin=self))
+
+    def _register_web_apis(self) -> None:
+        if self._registered:
+            return
+        for route, handler, methods, desc in self._web_api_routes():
+            self.context.register_web_api(route, handler, methods, desc)
+        self._registered = True
+
+    def _web_api_routes(self):
+        return [
+            (f"/{PLUGIN_NAME}/state", self.state, ["GET"], "Get API Aggregator state"),
+            (f"/{PLUGIN_NAME}/groups/create", self.group_create, ["POST"], "Create group"),
+            (f"/{PLUGIN_NAME}/groups/update", self.group_update, ["POST"], "Update group"),
+            (f"/{PLUGIN_NAME}/groups/delete", self.group_delete, ["POST"], "Delete group"),
+            (f"/{PLUGIN_NAME}/apis/create", self.api_create, ["POST"], "Create API"),
+            (f"/{PLUGIN_NAME}/apis/update", self.api_update, ["POST"], "Update API"),
+            (f"/{PLUGIN_NAME}/apis/delete", self.api_delete, ["POST"], "Delete API"),
+            (f"/{PLUGIN_NAME}/apis/toggle", self.api_toggle, ["POST"], "Toggle API"),
+            (f"/{PLUGIN_NAME}/apis/test", self.api_test, ["POST"], "Test API"),
+            (f"/{PLUGIN_NAME}/apis/test-all", self.api_test_all, ["POST"], "Test enabled APIs"),
+            (f"/{PLUGIN_NAME}/aggregate/call", self.aggregate_call, ["POST"], "Call aggregated APIs"),
+            (f"/{PLUGIN_NAME}/settings/save", self.save_settings, ["POST"], "Save API Aggregator settings"),
+            (f"/{PLUGIN_NAME}/triggers/create", self.trigger_create, ["POST"], "Create trigger"),
+            (f"/{PLUGIN_NAME}/triggers/update", self.trigger_update, ["POST"], "Update trigger"),
+            (f"/{PLUGIN_NAME}/triggers/delete", self.trigger_delete, ["POST"], "Delete trigger"),
+            (f"/{PLUGIN_NAME}/triggers/toggle", self.trigger_toggle, ["POST"], "Toggle trigger"),
+            (f"/{PLUGIN_NAME}/triggers/preview-response-path", self.trigger_preview_response_path, ["POST"], "Preview trigger response path"),
+            (f"/{PLUGIN_NAME}/import", self.import_data, ["POST"], "Import JSON data"),
+            (f"/{PLUGIN_NAME}/export", self.export_data, ["GET"], "Export JSON data"),
+        ]
+
+    async def state(self):
+        data = await self.store.read()
+        return ok({"plugin": PLUGIN_NAME, "version": VERSION, **data})
+
+    async def group_create(self):
+        body = await read_json_body()
+        name = str(body.get("name") or "").strip()
+        if not name:
+            return fail("group name is required")
+        group = {
+            "id": new_id("group"),
+            "name": name,
+            "description": str(body.get("description") or ""),
+            "created_at": now_ms(),
+            "updated_at": now_ms(),
+        }
+
+        def mutate(data):
+            if group_name_exists(data, name):
+                raise ValueError("group name already exists")
+            data["groups"].append(group)
+            return group
+
+        try:
+            result, data = await self.store.mutate(mutate)
+            return ok({"group": result, "state": data})
+        except ValueError as exc:
+            return fail(str(exc), 400)
+
+    async def group_update(self):
+        body = await read_json_body()
+        group_id = str(body.get("id") or "").strip()
+        if not group_id:
+            return fail("group id is required")
+
+        def mutate(data):
+            for group in data["groups"]:
+                if group["id"] == group_id:
+                    next_name = str(body.get("name", group["name"]) or group["name"]).strip()
+                    if not next_name:
+                        raise ValueError("group name is required")
+                    if group_name_exists(data, next_name, exclude_id=group_id):
+                        raise ValueError("group name already exists")
+                    group["name"] = next_name
+                    group["description"] = str(body.get("description", group.get("description", "")) or "")
+                    group["updated_at"] = now_ms()
+                    return group
+            raise LookupError("group not found")
+
+        try:
+            result, data = await self.store.mutate(mutate)
+            return ok({"group": result, "state": data})
+        except ValueError as exc:
+            return fail(str(exc), 400)
+        except LookupError as exc:
+            return fail(str(exc), 404)
+
+    async def group_delete(self):
+        body = await read_json_body()
+        group_id = str(body.get("id") or "").strip()
+        if group_id == "default":
+            return fail("default group cannot be deleted")
+
+        def mutate(data):
+            groups = data["groups"]
+            if not any(group["id"] == group_id for group in groups):
+                raise LookupError("group not found")
+            fallback = groups[0]["id"] if groups[0]["id"] != group_id else "default"
+            data["groups"] = [group for group in groups if group["id"] != group_id]
+            if not data["groups"]:
+                data["groups"].append(ApiAggregatorStore(self.root).default_data()["groups"][0])
+                fallback = "default"
+            for api in data["apis"]:
+                if api.get("group_id") == group_id:
+                    api["group_id"] = fallback
+                    api["updated_at"] = now_ms()
+            for rule in data.get("settings", {}).get("triggers", []):
+                if rule.get("group_id") == group_id:
+                    rule["group_id"] = fallback
+                    rule["updated_at"] = now_ms()
+            return {"deleted": group_id}
+
+        try:
+            result, data = await self.store.mutate(mutate)
+            return ok({"result": result, "state": data})
+        except LookupError as exc:
+            return fail(str(exc), 404)
+
+    async def api_create(self):
+        body = await read_json_body()
+
+        def mutate(data):
+            api = parse_api_payload(body)
+            group_ids = {group["id"] for group in data["groups"]}
+            if api["group_id"] not in group_ids:
+                api["group_id"] = data["groups"][0]["id"]
+            data["apis"].append(api)
+            return api
+
+        try:
+            result, data = await self.store.mutate(mutate)
+            return ok({"api": result, "state": data})
+        except ValueError as exc:
+            return fail(str(exc))
+
+    async def api_update(self):
+        body = await read_json_body()
+        api_id = str(body.get("id") or "").strip()
+        if not api_id:
+            return fail("api id is required")
+
+        def mutate(data):
+            for index, api in enumerate(data["apis"]):
+                if api["id"] == api_id:
+                    updated = parse_api_payload(body, api)
+                    group_ids = {group["id"] for group in data["groups"]}
+                    if updated["group_id"] not in group_ids:
+                        updated["group_id"] = data["groups"][0]["id"]
+                    data["apis"][index] = updated
+                    return updated
+            raise LookupError("api not found")
+
+        try:
+            result, data = await self.store.mutate(mutate)
+            return ok({"api": result, "state": data})
+        except LookupError as exc:
+            return fail(str(exc), 404)
+        except ValueError as exc:
+            return fail(str(exc))
+
+    async def api_delete(self):
+        body = await read_json_body()
+        api_id = str(body.get("id") or "").strip()
+
+        def mutate(data):
+            before = len(data["apis"])
+            data["apis"] = [api for api in data["apis"] if api["id"] != api_id]
+            if len(data["apis"]) == before:
+                raise LookupError("api not found")
+            return {"deleted": api_id}
+
+        try:
+            result, data = await self.store.mutate(mutate)
+            return ok({"result": result, "state": data})
+        except LookupError as exc:
+            return fail(str(exc), 404)
+
+    async def api_toggle(self):
+        body = await read_json_body()
+        api_id = str(body.get("id") or "").strip()
+        enabled = bool(body.get("enabled"))
+
+        def mutate(data):
+            for api in data["apis"]:
+                if api["id"] == api_id:
+                    api["enabled"] = enabled
+                    api["updated_at"] = now_ms()
+                    return api
+            raise LookupError("api not found")
+
+        try:
+            result, data = await self.store.mutate(mutate)
+            return ok({"api": result, "state": data})
+        except LookupError as exc:
+            return fail(str(exc), 404)
+
+    async def api_test(self):
+        body = await read_json_body()
+        api_id = str(body.get("id") or "").strip()
+        data = await self.store.read()
+        api = next((item for item in data["apis"] if item["id"] == api_id), None)
+        if not api:
+            return fail("api not found", 404)
+        result = await execute_api_request(api, ignore_cooldown=True)
+
+        def mutate(next_data):
+            record_test_result(next_data, result)
+            return result
+
+        saved_result, state = await self.store.mutate(mutate)
+        return ok({"result": saved_result, "state": state})
+
+    async def api_test_all(self):
+        data = await self.store.read()
+        apis = [api for api in data["apis"] if api.get("enabled")]
+        results = [await execute_api_request(api, ignore_cooldown=True) for api in apis]
+
+        def mutate(next_data):
+            result_by_id = {item["api_id"]: item for item in results}
+            for result in result_by_id.values():
+                record_test_result(next_data, result)
+            return results
+
+        saved_results, state = await self.store.mutate(mutate)
+        return ok({"results": saved_results, "state": state})
+
+    async def aggregate_call(self):
+        body = await read_json_body()
+        aggregate_result, state_or_error, status = await self.run_aggregate(
+            str(body.get("group_id") or "all").strip() or "all",
+            str(body.get("strategy") or "").strip() or None,
+        )
+        if status != 200:
+            return fail(str(state_or_error), status)
+        return ok({"result": aggregate_result, "state": state_or_error})
+
+    async def run_aggregate_by_group_name(self, group_name: str, strategy: str | None = None):
+        data = await self.store.read()
+        group_id, error = resolve_group_name(data, group_name)
+        if error:
+            return None, error, 404
+        return await self.run_aggregate(str(group_id or "all"), strategy)
+
+    async def run_aggregate(self, group_id: str, strategy: str | None = None):
+        data = await self.store.read()
+        strategy = strategy or str(data.get("settings", {}).get("strategy") or "first-ok")
+        if strategy not in AGGREGATION_STRATEGIES:
+            return None, "unknown aggregation strategy", 400
+        if group_id != "all" and not any(group["id"] == group_id for group in data["groups"]):
+            return None, "group not found", 404
+
+        candidates, start_index = ordered_candidates(data, group_id, strategy)
+        if not candidates:
+            return None, "no enabled API candidates", 404
+
+        results: list[dict[str, Any]] = []
+        selected: dict[str, Any] | None = None
+        failure_reason = ""
+        for api in candidates:
+            result = await execute_api_request(api)
+            results.append(result)
+            if result.get("ok"):
+                selected = result
+                break
+            failure_reason = str(result.get("error") or "request failed")
+
+        def mutate(next_data):
+            for result in results:
+                record_test_result(next_data, result)
+            if strategy == "round-robin" and start_index is not None:
+                cursors = next_data.setdefault("settings", {}).setdefault("cursors", {})
+                cursors[group_id] = (start_index + 1) % len(candidates)
+            return {
+                "group_id": group_id,
+                "strategy": strategy,
+                "ok": bool(selected),
+                "selected": selected,
+                "attempts": results,
+                "failure_reason": failure_reason if not selected else "",
+            }
+
+        aggregate_result, state = await self.store.mutate(mutate)
+        return aggregate_result, state, 200
+
+    async def save_settings(self):
+        body = await read_json_body()
+        strategy = str(body.get("strategy") or "first-ok")
+        if strategy not in AGGREGATION_STRATEGIES:
+            return fail("unknown aggregation strategy")
+
+        def mutate(data):
+            data.setdefault("settings", {})["strategy"] = strategy
+            return data["settings"]
+
+        settings, state = await self.store.mutate(mutate)
+        return ok({"settings": settings, "state": state})
+
+    def parse_trigger_payload(
+        self,
+        body: dict[str, Any],
+        existing: dict[str, Any] | None = None,
+        group_ids: set[str] | None = None,
+    ) -> dict[str, Any]:
+        base = dict(existing or {})
+        phrase = str(body.get("trigger", base.get("trigger", "")) or "").strip()
+        if not phrase:
+            raise ValueError("trigger is required")
+        mode = str(body.get("match_mode", base.get("match_mode", "contains")) or "contains").strip()
+        if mode not in TRIGGER_MATCH_MODES:
+            raise ValueError("unknown match mode")
+        strategy = str(body.get("strategy", base.get("strategy", "first-ok")) or "first-ok").strip()
+        if strategy not in AGGREGATION_STRATEGIES:
+            raise ValueError("unknown aggregation strategy")
+        response_type = str(body.get("response_type", base.get("response_type", "summary")) or "summary").strip()
+        if response_type not in RESPONSE_TYPES:
+            raise ValueError("unknown response type")
+        group_id = str(body.get("group_id", base.get("group_id", "all")) or "all").strip() or "all"
+        if group_id != "all" and group_ids is not None and group_id not in group_ids:
+            raise ValueError("group not found")
+        ts = now_ms()
+        return {
+            **base,
+            "id": str(base.get("id") or body.get("id") or new_id("trigger")),
+            "enabled": bool(body.get("enabled", base.get("enabled", True))),
+            "trigger": phrase,
+            "match_mode": mode,
+            "group_id": group_id,
+            "strategy": strategy,
+            "preview_api_id": str(
+                body.get("preview_api_id", base.get("preview_api_id", "")) or ""
+            ).strip(),
+            "stop_event": bool(body.get("stop_event", base.get("stop_event", True))),
+            "response_type": response_type,
+            "response_path": str(body.get("response_path", base.get("response_path", "")) or "").strip(),
+            "created_at": int(base.get("created_at") or ts),
+            "updated_at": ts,
+        }
+
+    async def trigger_create(self):
+        body = await read_json_body()
+
+        def mutate(data):
+            group_ids = {group["id"] for group in data["groups"]}
+            rule = self.parse_trigger_payload(body, group_ids=group_ids)
+            data.setdefault("settings", {}).setdefault("triggers", []).append(rule)
+            return rule
+
+        try:
+            rule, state = await self.store.mutate(mutate)
+            return ok({"trigger": rule, "state": state})
+        except ValueError as exc:
+            return fail(str(exc))
+
+    async def trigger_update(self):
+        body = await read_json_body()
+        trigger_id = str(body.get("id") or "").strip()
+        if not trigger_id:
+            return fail("trigger id is required")
+
+        def mutate(data):
+            triggers = data.setdefault("settings", {}).setdefault("triggers", [])
+            group_ids = {group["id"] for group in data["groups"]}
+            for index, rule in enumerate(triggers):
+                if rule["id"] == trigger_id:
+                    updated = self.parse_trigger_payload(body, rule, group_ids)
+                    triggers[index] = updated
+                    return updated
+            raise LookupError("trigger not found")
+
+        try:
+            rule, state = await self.store.mutate(mutate)
+            return ok({"trigger": rule, "state": state})
+        except LookupError as exc:
+            return fail(str(exc), 404)
+        except ValueError as exc:
+            return fail(str(exc))
+
+    async def trigger_delete(self):
+        body = await read_json_body()
+        trigger_id = str(body.get("id") or "").strip()
+
+        def mutate(data):
+            triggers = data.setdefault("settings", {}).setdefault("triggers", [])
+            before = len(triggers)
+            data["settings"]["triggers"] = [rule for rule in triggers if rule["id"] != trigger_id]
+            if len(data["settings"]["triggers"]) == before:
+                raise LookupError("trigger not found")
+            return {"deleted": trigger_id}
+
+        try:
+            result, state = await self.store.mutate(mutate)
+            return ok({"result": result, "state": state})
+        except LookupError as exc:
+            return fail(str(exc), 404)
+
+    async def trigger_toggle(self):
+        body = await read_json_body()
+        trigger_id = str(body.get("id") or "").strip()
+        enabled = bool(body.get("enabled"))
+
+        def mutate(data):
+            triggers = data.setdefault("settings", {}).setdefault("triggers", [])
+            for rule in triggers:
+                if rule["id"] == trigger_id:
+                    rule["enabled"] = enabled
+                    rule["updated_at"] = now_ms()
+                    return rule
+            raise LookupError("trigger not found")
+
+        try:
+            rule, state = await self.store.mutate(mutate)
+            return ok({"trigger": rule, "state": state})
+        except LookupError as exc:
+            return fail(str(exc), 404)
+
+    async def trigger_preview_response_path(self):
+        body = await read_json_body()
+        api_id = str(body.get("api_id") or "").strip()
+        path = str(body.get("response_path") or "").strip()
+        data = await self.store.read()
+        api = next((item for item in data["apis"] if item["id"] == api_id), None)
+        if not api:
+            return fail("api not found", 404)
+        result = await execute_api_request(api, ignore_cooldown=True)
+
+        def mutate(next_data):
+            record_test_result(next_data, result)
+            return preview_response_path({"selected": result}, path)
+
+        preview, state = await self.store.mutate(mutate)
+        return ok({"preview": preview, "result": result, "state": state})
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_message(self, event: AstrMessageEvent):
+        message = str(getattr(event, "message_str", "") or "")
+        if not message:
+            return
+        data = await self.store.read()
+        all_triggers = data.get("settings", {}).get("triggers", [])
+        triggers = [rule for rule in all_triggers if rule.get("enabled")]
+        logger.info(
+            f"[api_aggregator] message received: text={message!r}, enabled_triggers={len(triggers)}, total_triggers={len(all_triggers)}"
+        )
+        for rule in triggers:
+            if not trigger_matches(rule, message):
+                continue
+            logger.info(
+                f"[api_aggregator] trigger matched: id={rule.get('id')}, trigger={rule.get('trigger')!r}, group={rule.get('group_id')}, strategy={rule.get('strategy')}"
+            )
+            result, state_or_error, status = await self.run_aggregate(
+                str(rule.get("group_id") or "all"),
+                str(rule.get("strategy") or data.get("settings", {}).get("strategy") or "first-ok"),
+            )
+            if status == 200 and isinstance(result, dict):
+                logger.info(
+                    f"[api_aggregator] aggregate success: ok={result.get('ok')}, attempts={len(result.get('attempts') or [])}"
+                )
+                if not result.get("ok"):
+                    logger.info(f"[api_aggregator] aggregate attempts failed: {result.get('attempts')}")
+                    yield event.plain_result(format_aggregate_reply(result))
+                    if rule.get("stop_event", True):
+                        event.stop_event()
+                    return
+                response_type = str(rule.get("response_type") or "summary")
+                if response_type == "image":
+                    response_path = str(rule.get("response_path") or "")
+                    image_url = str(response_value(result, response_path) or "").strip()
+                    if image_url.startswith(("http://", "https://")):
+                        yield event.image_result(image_url)
+                    else:
+                        logger.info(
+                            f"[api_aggregator] image url extraction failed: path={response_path!r}, value={image_url!r}, selected={result.get('selected')}"
+                        )
+                        yield event.plain_result(format_missing_url_reply("image", response_path, result))
+                elif response_type == "audio":
+                    response_path = str(rule.get("response_path") or "")
+                    audio_url = str(response_value(result, response_path) or "").strip()
+                    if audio_url.startswith(("http://", "https://")):
+                        yield event.chain_result([Comp.Record(file=audio_url, url=audio_url)])
+                    else:
+                        logger.info(
+                            f"[api_aggregator] audio url extraction failed: path={response_path!r}, value={audio_url!r}, selected={result.get('selected')}"
+                        )
+                        yield event.plain_result(format_missing_url_reply("audio", response_path, result))
+                elif response_type == "video":
+                    response_path = str(rule.get("response_path") or "")
+                    video_url = str(response_value(result, response_path) or "").strip()
+                    if video_url.startswith(("http://", "https://")):
+                        yield event.chain_result([Comp.Video.fromURL(url=video_url)])
+                    else:
+                        logger.info(
+                            f"[api_aggregator] video url extraction failed: path={response_path!r}, value={video_url!r}, selected={result.get('selected')}"
+                        )
+                        yield event.plain_result(format_missing_url_reply("video", response_path, result))
+                elif response_type == "text":
+                    value = response_value(result, str(rule.get("response_path") or ""))
+                    if isinstance(value, (dict, list)):
+                        yield event.plain_result(json.dumps(value, ensure_ascii=False))
+                    else:
+                        yield event.plain_result(str(value))
+                else:
+                    yield event.plain_result(format_aggregate_reply(result))
+            else:
+                logger.info(f"[api_aggregator] aggregate failed: {state_or_error}")
+                yield event.plain_result(f"API Aggregator: {state_or_error}")
+            if rule.get("stop_event", True):
+                event.stop_event()
+            return
+        logger.info("[api_aggregator] no trigger matched")
+
+    async def import_data(self):
+        body = await read_json_body()
+        raw_data = body.get("data") if "data" in body else body
+        strategy = str(body.get("strategy") or "replace").strip().lower()
+        try:
+            imported = validate_import_payload(raw_data)
+        except ValueError as exc:
+            return fail(str(exc), 400)
+
+        if strategy == "validate":
+            return ok(
+                {
+                    "valid": True,
+                    "strategy": strategy,
+                    "summary": {
+                        "groups": len(imported.get("groups", [])),
+                        "apis": len(imported.get("apis", [])),
+                        "triggers": len(imported.get("settings", {}).get("triggers", [])),
+                    },
+                }
+            )
+        if strategy == "replace":
+            saved = await self.store.write(imported)
+            return ok({"state": saved, "strategy": strategy})
+        if strategy == "merge":
+            current = await self.store.read()
+            saved = await self.store.write(merge_import_data(current, imported))
+            return ok({"state": saved, "strategy": strategy})
+        return fail("unknown import strategy", 400)
+
+    async def export_data(self):
+        data = await self.store.read()
+        return ok(data)

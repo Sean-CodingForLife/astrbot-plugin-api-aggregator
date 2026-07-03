@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API Aggregator</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>API Aggregator</h1>
+        <p>Manage API entries, groups, enable state, tests, import, and export.</p>
+      </div>
+      <div class="toolbar">
+        <button id="refreshBtn" type="button">Refresh</button>
+        <button id="exportBtn" type="button">Export</button>
+        <select id="importStrategy" title="Import strategy">
+          <option value="replace">Import: Replace</option>
+          <option value="merge">Import: Merge</option>
+          <option value="validate">Import: Validate</option>
+        </select>
+        <label class="import-btn">
+          Import
+          <input id="importInput" type="file" accept="application/json,.json">
+        </label>
+      </div>
+    </header>
+
+    <section class="summary-grid">
+      <div class="metric">
+        <span>Total APIs</span>
+        <strong id="apiCount">0</strong>
+      </div>
+      <div class="metric">
+        <span>Enabled</span>
+        <strong id="enabledCount">0</strong>
+      </div>
+      <div class="metric">
+        <span>Last OK</span>
+        <strong id="okCount">0</strong>
+      </div>
+    </section>
+
+    <section class="panel aggregate-panel">
+      <div class="section-head">
+        <h2>Aggregator</h2>
+        <div class="row">
+          <select id="aggregateGroup"></select>
+          <select id="strategySelect">
+            <option value="first-ok">First OK</option>
+            <option value="round-robin">Round Robin</option>
+            <option value="random">Random</option>
+          </select>
+          <button id="saveSettingsBtn" type="button">Save Strategy</button>
+          <button id="callAggregateBtn" type="button" class="primary">Call Group</button>
+        </div>
+      </div>
+      <pre id="aggregateOutput">No aggregate call yet.</pre>
+    </section>
+
+    <section class="panel trigger-panel">
+      <div class="section-head">
+        <h2>Message Triggers</h2>
+        <button id="addTriggerBtn" type="button" class="primary">Add Trigger</button>
+      </div>
+      <div id="triggerList" class="trigger-list"></div>
+    </section>
+
+    <section class="layout">
+      <aside class="panel groups-panel">
+        <div class="section-head">
+          <h2>Groups</h2>
+          <button id="addGroupBtn" type="button">Add</button>
+        </div>
+        <div id="groupList" class="group-list"></div>
+      </aside>
+
+      <section class="panel api-panel">
+        <div class="section-head">
+          <h2 id="apiPanelTitle">APIs</h2>
+          <div class="row">
+            <input id="searchInput" type="search" placeholder="Search name or URL">
+            <button id="testAllBtn" type="button">Test Enabled</button>
+            <button id="addApiBtn" type="button" class="primary">Add API</button>
+          </div>
+        </div>
+        <div id="apiList" class="api-list"></div>
+      </section>
+    </section>
+
+    <section class="panel logs-panel">
+      <div class="section-head">
+        <h2>Test Logs</h2>
+        <button id="clearLogViewBtn" type="button">Clear View</button>
+      </div>
+      <pre id="logOutput">Waiting for action...</pre>
+    </section>
+  </main>
+
+  <dialog id="apiDialog">
+    <form id="apiForm" class="dialog-form">
+      <h2 id="apiDialogTitle">API</h2>
+      <input type="hidden" id="apiId">
+      <label>Name<input id="apiName" required></label>
+      <label>Group<select id="apiGroup"></select></label>
+      <label>URL<input id="apiUrl" required placeholder="https://example.com/api"></label>
+      <label>Method<select id="apiMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></label>
+      <label>Query JSON<textarea id="apiQuery" spellcheck="false">{}</textarea></label>
+      <label>Headers JSON<textarea id="apiHeaders" spellcheck="false">{}</textarea></label>
+      <label>Body<textarea id="apiBody" spellcheck="false"></textarea></label>
+      <label>Timeout Seconds<input id="apiTimeoutSeconds" type="number" min="1" max="120" value="12"></label>
+      <label>Retry Count<input id="apiRetryCount" type="number" min="0" max="5" value="0"></label>
+      <label>Cooldown Seconds<input id="apiCooldownSeconds" type="number" min="0" max="3600" value="0"></label>
+      <label>Description<textarea id="apiDescription"></textarea></label>
+      <label class="check-row"><input id="apiEnabled" type="checkbox"> Enabled</label>
+      <div class="dialog-actions">
+        <button type="button" id="cancelApiBtn">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="groupDialog">
+    <form id="groupForm" class="dialog-form">
+      <h2 id="groupDialogTitle">Group</h2>
+      <input type="hidden" id="groupId">
+      <label>Name<input id="groupName" required></label>
+      <label>Description<textarea id="groupDescription"></textarea></label>
+      <div class="dialog-actions">
+        <button type="button" id="cancelGroupBtn">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="triggerDialog">
+    <form id="triggerForm" class="dialog-form">
+      <h2 id="triggerDialogTitle">Trigger</h2>
+      <input type="hidden" id="triggerId">
+      <label>Trigger<input id="triggerPhrase" required placeholder="example: /api"></label>
+      <label>Match Mode<select id="triggerMode"><option value="contains">Contains</option><option value="exact">Exact</option><option value="command">Command</option></select></label>
+      <label>Group<select id="triggerGroup"></select></label>
+      <label>Strategy<select id="triggerStrategy"><option value="first-ok">First OK</option><option value="round-robin">Round Robin</option><option value="random">Random</option></select></label>
+      <label>Preview API<select id="triggerPreviewApi"></select></label>
+      <label>Response Type<select id="triggerResponseType"><option value="summary">Summary</option><option value="text">Text</option><option value="image">Image</option><option value="audio">Audio</option><option value="video">Video</option></select></label>
+      <label>Response Path<input id="triggerResponsePath" placeholder="example: data.link"></label>
+      <div class="dialog-actions">
+        <button type="button" id="previewResponsePathBtn">Preview Path</button>
+      </div>
+      <pre id="triggerResponsePreview">No preview yet.</pre>
+      <label class="check-row"><input id="triggerEnabled" type="checkbox"> Enabled</label>
+      <label class="check-row"><input id="triggerStopEvent" type="checkbox"> Stop Event</label>
+      <div class="dialog-actions">
+        <button type="button" id="cancelTriggerBtn">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
