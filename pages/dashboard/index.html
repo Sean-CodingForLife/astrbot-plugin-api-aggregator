@@ -200,17 +200,7 @@
       <label>Method<select id="apiMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></label>
       <label>Query JSON<textarea id="apiQuery" spellcheck="false">{}</textarea></label>
       <label>Headers JSON<textarea id="apiHeaders" spellcheck="false">{}</textarea></label>
-      <label>Body Mode<select id="apiBodyMode"><option value="json">JSON</option><option value="raw">Raw</option><option value="form-data">form-data</option><option value="x-www-form-urlencoded">x-www-form-urlencoded</option></select></label>
-      <label id="apiBodyTextWrap">Body<textarea id="apiBody" spellcheck="false"></textarea></label>
-      <label id="apiBodyFormWrap" class="is-hidden">Body Form JSON<textarea id="apiBodyForm" spellcheck="false">{}</textarea></label>
-      <div id="apiBodyFileWrap" class="is-hidden">
-        <label class="import-btn">
-          Attach File
-          <input id="apiBodyFile" type="file">
-        </label>
-        <input id="apiBodyFileField" placeholder="file field name">
-        <p id="apiBodyFileHint">For form-data only. The selected file will be stored in Body Form JSON as a file object under the field name above.</p>
-      </div>
+      <label>Body<textarea id="apiBody" spellcheck="false"></textarea></label>
       <label>Priority<input id="apiPriority" type="number" min="1" max="1000" value="100"></label>
       <label>Timeout Seconds<input id="apiTimeoutSeconds" type="number" min="1" max="120" value="12"></label>
       <label>Retry Count<input id="apiRetryCount" type="number" min="0" max="5" value="0"></label>

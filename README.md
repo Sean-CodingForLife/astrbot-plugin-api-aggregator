@@ -83,25 +83,6 @@ URL、Query、Headers 和 Body 支持变量模板，语法为 `{{path.to.value}}
 - `{{trigger.phrase}}` / `{{trigger.match_mode}}`
 - `{{vars.foo}}` / `{{vars.payload.user_id}}`
 
-Body mode notes:
-- `json`: send `Body` as JSON text. Invalid JSON is rejected before the request is sent.
-- `raw`: send `Body` as raw text bytes.
-- `x-www-form-urlencoded`: send `Body Form JSON` as URL-encoded key/value pairs.
-- `form-data`: send `Body Form JSON` as multipart form-data.
-
-For `form-data`, file fields must use this object shape in `Body Form JSON`:
-
-```json
-{
-  "avatar": {
-    "type": "file",
-    "filename": "avatar.png",
-    "content_type": "image/png",
-    "data_base64": "iVBORw0KGgoAAAANSUhEUgAA..."
-  }
-}
-```
-
 说明：
 
 - `env.*` 从 AstrBot 进程环境变量读取，适合密钥注入。

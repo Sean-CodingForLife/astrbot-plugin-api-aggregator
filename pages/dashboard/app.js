@@ -91,17 +91,7 @@ function applyTranslations() {
   setLabelText("apiMethod", "method");
   setLabelText("apiQuery", "queryJson");
   setLabelText("apiHeaders", "headersJson");
-  setLabelText("apiBodyMode", "bodyMode");
   setLabelText("apiBody", "body");
-  setLabelText("apiBodyForm", "bodyFormJson");
-  if ($("apiBodyFileWrap")?.querySelector(".import-btn")?.firstChild) {
-    $("apiBodyFileWrap").querySelector(".import-btn").firstChild.textContent = `${t("attachFile", "Attach File")} `;
-  }
-  $("apiBodyFileField").placeholder = t("fileFieldName", "file field name");
-  $("apiBodyFileHint").textContent = t(
-    "bodyFileHint",
-    "For form-data only. The selected file will be stored in Body Form JSON as a file object under the field name above.",
-  );
   setLabelText("apiPriority", "priority");
   setLabelText("apiTimeoutSeconds", "timeoutSeconds");
   setLabelText("apiRetryCount", "retryCount");
@@ -145,10 +135,6 @@ function applyTranslations() {
   setOptionText("triggerResponseTransform", "int", "integer");
   setOptionText("triggerResponseTransform", "float", "float");
   setOptionText("triggerResponseTransform", "bool", "boolean");
-  setOptionText("apiBodyMode", "json", "jsonBody");
-  setOptionText("apiBodyMode", "raw", "rawBody");
-  setOptionText("apiBodyMode", "form-data", "formData");
-  setOptionText("apiBodyMode", "x-www-form-urlencoded", "formUrlencoded");
   setText("#previewResponsePathBtn", "previewPath");
   setLabelText("triggerEnabled", "enabled");
   setLabelText("triggerStopEvent", "stopEvent");
@@ -497,46 +483,6 @@ function parseJsonInput(id) {
   }
 }
 
-function toggleApiBodyFields() {
-  const mode = $("apiBodyMode").value || "json";
-  $("apiBodyTextWrap").classList.toggle("is-hidden", ["form-data", "x-www-form-urlencoded"].includes(mode));
-  $("apiBodyFormWrap").classList.toggle("is-hidden", !["form-data", "x-www-form-urlencoded"].includes(mode));
-  $("apiBodyFileWrap").classList.toggle("is-hidden", mode !== "form-data");
-}
-
-async function attachApiBodyFile(file) {
-  const fieldName = $("apiBodyFileField").value.trim();
-  if (!fieldName) {
-    throw new Error("file field name is required");
-  }
-  const text = $("apiBodyForm").value.trim();
-  const parsed = text ? JSON.parse(text) : {};
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("apiBodyForm must be a JSON object");
-  }
-  const dataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("failed to read file"));
-    reader.readAsDataURL(file);
-  });
-  const marker = ";base64,";
-  const markerIndex = dataUrl.indexOf(marker);
-  if (markerIndex < 0) {
-    throw new Error("failed to encode file as base64");
-  }
-  const meta = dataUrl.slice(5, markerIndex);
-  const contentType = meta || file.type || "application/octet-stream";
-  const dataBase64 = dataUrl.slice(markerIndex + marker.length);
-  parsed[fieldName] = {
-    type: "file",
-    filename: file.name || `${fieldName}.bin`,
-    content_type: contentType,
-    data_base64: dataBase64,
-  };
-  $("apiBodyForm").value = JSON.stringify(parsed, null, 2);
-}
-
 function openApiDialog(api = null) {
   const defaultTimeoutSeconds = Number.parseInt(state.runtime_config?.default_timeout_seconds ?? 12, 10) || 12;
   $("apiDialogTitle").textContent = api ? `${t("edit")} API` : t("addApi");
@@ -548,18 +494,13 @@ function openApiDialog(api = null) {
   $("apiMethod").value = api?.method || "GET";
   $("apiQuery").value = JSON.stringify(api?.query || {}, null, 2);
   $("apiHeaders").value = JSON.stringify(api?.headers || {}, null, 2);
-  $("apiBodyMode").value = api?.body_mode || "json";
   $("apiBody").value = api?.body || "";
-  $("apiBodyForm").value = JSON.stringify(api?.body_form || {}, null, 2);
-  $("apiBodyFileField").value = "";
-  $("apiBodyFile").value = "";
   $("apiPriority").value = String(api?.priority ?? 100);
   $("apiTimeoutSeconds").value = String(api?.timeout_seconds ?? defaultTimeoutSeconds);
   $("apiRetryCount").value = String(api?.retry_count ?? 0);
   $("apiCooldownSeconds").value = String(api?.cooldown_seconds ?? 0);
   $("apiDescription").value = api?.description || "";
   $("apiEnabled").checked = api?.enabled !== false;
-  toggleApiBodyFields();
   $("apiDialog").showModal();
 }
 
@@ -605,9 +546,7 @@ async function saveApi(event) {
     method: $("apiMethod").value,
     query: parseJsonInput("apiQuery"),
     headers: parseJsonInput("apiHeaders"),
-    body_mode: $("apiBodyMode").value,
     body: $("apiBody").value,
-    body_form: parseJsonInput("apiBodyForm"),
     priority: parseNumberInput("apiPriority", 100, 1, 1000),
     timeout_seconds: parseNumberInput("apiTimeoutSeconds", defaultTimeoutSeconds, 1, 120),
     retry_count: parseNumberInput("apiRetryCount", 0, 0, 5),
@@ -775,19 +714,6 @@ $("addApiBtn").addEventListener("click", () => openApiDialog());
 $("addGroupBtn").addEventListener("click", () => openGroupDialog());
 $("addTriggerBtn").addEventListener("click", () => openTriggerDialog());
 $("cancelApiBtn").addEventListener("click", () => $("apiDialog").close());
-$("apiBodyMode").addEventListener("change", toggleApiBodyFields);
-$("apiBodyFile").addEventListener("change", async (event) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  try {
-    await attachApiBodyFile(file);
-    log(t("fileAttached", "File attached"), { field: $("apiBodyFileField").value.trim(), name: file.name, size: file.size });
-  } catch (error) {
-    log(t("fileAttachFailed", "File attach failed"), { message: error.message });
-  } finally {
-    event.target.value = "";
-  }
-});
 $("cancelGroupBtn").addEventListener("click", () => $("groupDialog").close());
 $("cancelTriggerBtn").addEventListener("click", () => $("triggerDialog").close());
 $("apiForm").addEventListener("submit", (event) => saveApi(event).catch((error) => log(t("saveApiFailed", "Save API failed"), { message: error.message })));

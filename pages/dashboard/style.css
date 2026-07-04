@@ -403,17 +403,6 @@ select,
   gap: 8px;
 }
 
-#apiBodyFileWrap {
-  display: grid;
-  gap: 8px;
-}
-
-#apiBodyFileHint {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 .group-list {
   display: flex;
   flex-wrap: wrap;
