@@ -4,7 +4,7 @@ import json
 import random
 from typing import Any
 
-from constants import (
+from .constants import (
     AGGREGATION_STRATEGIES,
     DATA_VERSION,
     DEFAULT_LANGUAGE_MODE,
@@ -14,10 +14,10 @@ from constants import (
     MAX_PREVIEW_MAX_CHARS,
     MAX_TEST_LOG_LIMIT,
 )
-from request_utils import execute_api_request
-from store import normalize_response_transform
-from template_utils import resolve_data_path
-from utils import clamp_int, now_ms, text_for
+from .request_utils import execute_api_request
+from .store import normalize_response_transform
+from .template_utils import resolve_data_path
+from .utils import clamp_int, now_ms, text_for
 
 
 def enabled_apis_for_group(data: dict[str, Any], group_id: str) -> list[dict[str, Any]]:
@@ -333,7 +333,7 @@ def format_missing_url_reply(
 
 
 def validate_import_payload(raw: Any) -> dict[str, Any]:
-    from store import normalize_data
+    from .store import normalize_data
 
     if not isinstance(raw, dict):
         raise ValueError("import data must be a JSON object")
@@ -350,7 +350,7 @@ def validate_import_payload(raw: Any) -> dict[str, Any]:
 
 
 def merge_import_data(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    from store import normalize_data
+    from .store import normalize_data
 
     current_groups = {
         str(item.get("id") or "").strip(): dict(item)

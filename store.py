@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from constants import (
+from .constants import (
     AGGREGATION_STRATEGIES,
     DATA_VERSION,
     DEFAULT_RESPONSE_READ_LIMIT_BYTES,
@@ -21,7 +21,7 @@ from constants import (
     RESPONSE_TRANSFORMS,
     TRIGGER_MATCH_MODES,
 )
-from utils import clamp_int, new_id, now_ms
+from .utils import clamp_int, new_id, now_ms
 
 
 def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:

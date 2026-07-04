@@ -8,7 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import ProxyHandler, Request, build_opener
 
-from constants import (
+from .constants import (
     DEFAULT_RESPONSE_READ_LIMIT_BYTES,
     DEFAULT_TIMEOUT_SECONDS,
     MAX_RESPONSE_READ_LIMIT_BYTES,
@@ -16,8 +16,8 @@ from constants import (
     MAX_TIMEOUT_SECONDS,
     SUPPORTED_PROXY_SCHEMES,
 )
-from template_utils import build_template_context, render_string_map_templates, render_template_string
-from utils import clamp_int, now_ms
+from .template_utils import build_template_context, render_string_map_templates, render_template_string
+from .utils import clamp_int, now_ms
 
 
 def build_request(api: dict[str, Any], template_context: dict[str, Any] | None = None) -> Request:
@@ -38,7 +38,7 @@ def build_request(api: dict[str, Any], template_context: dict[str, Any] | None =
 
 
 def normalize_proxy_mode(value: Any, *, proxy_url_value: Any = "") -> str:
-    from constants import PROXY_MODES
+    from .constants import PROXY_MODES
 
     mode = str(value or "").strip()
     if mode in PROXY_MODES:

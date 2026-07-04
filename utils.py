@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Any
 
-from constants import DEFAULT_LANGUAGE_MODE, LANGUAGE_MODES
+from .constants import DEFAULT_LANGUAGE_MODE, LANGUAGE_MODES
 
 
 def now_ms() -> int:

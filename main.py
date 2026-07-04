@@ -15,7 +15,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
-from aggregation import (
+from .aggregation import (
     capture_trigger_arguments,
     enabled_apis_for_group,
     format_aggregate_reply,
@@ -33,7 +33,7 @@ from aggregation import (
     trigger_matches,
     validate_import_payload,
 )
-from constants import (
+from .constants import (
     DEFAULT_PREVIEW_MAX_CHARS,
     DEFAULT_RESPONSE_READ_LIMIT_BYTES,
     DEFAULT_TEST_LOG_LIMIT,
@@ -47,10 +47,10 @@ from constants import (
     PLUGIN_NAME,
     VERSION,
 )
-from request_utils import execute_api_request, resolve_proxy_config
-from store import ApiAggregatorStore, normalize_response_transform, pick_string_map, pick_template_vars
-from template_utils import build_message_template_context
-from utils import clamp_int, new_id, normalize_language_mode, now_ms
+from .request_utils import execute_api_request, resolve_proxy_config
+from .store import ApiAggregatorStore, normalize_response_transform, pick_string_map, pick_template_vars
+from .template_utils import build_message_template_context
+from .utils import clamp_int, new_id, normalize_language_mode, now_ms
 
 
 async def read_json_body() -> dict[str, Any]:

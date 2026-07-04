@@ -10,7 +10,7 @@ from typing import Any
 
 from astrbot.api.event import AstrMessageEvent
 
-from constants import TEMPLATE_PATTERN
+from .constants import TEMPLATE_PATTERN
 
 
 def resolve_data_path(source: Any, path: str) -> Any:
@@ -102,7 +102,7 @@ def render_template_string(
 
 
 def render_string_map_templates(value: Any, context: dict[str, Any]) -> dict[str, str]:
-    from store import pick_string_map
+    from .store import pick_string_map
 
     raw_map = pick_string_map(value)
     return {
@@ -126,7 +126,7 @@ def build_message_template_context(
     template_vars: dict[str, Any] | None = None,
     trigger_args: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    from store import pick_template_vars
+    from .store import pick_template_vars
 
     text = str(message or "")
     parts = text.split(maxsplit=1)
