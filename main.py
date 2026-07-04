@@ -34,6 +34,7 @@ from .aggregation import (
     validate_import_payload,
 )
 from .constants import (
+    AGGREGATION_STRATEGIES,
     DEFAULT_PREVIEW_MAX_CHARS,
     DEFAULT_RESPONSE_READ_LIMIT_BYTES,
     DEFAULT_TEST_LOG_LIMIT,
@@ -45,12 +46,14 @@ from .constants import (
     MAX_TEST_LOG_LIMIT,
     MAX_TIMEOUT_SECONDS,
     PLUGIN_NAME,
+    RESPONSE_TYPES,
+    TRIGGER_MATCH_MODES,
     VERSION,
 )
 from .request_utils import execute_api_request, resolve_proxy_config
 from .store import ApiAggregatorStore, normalize_response_transform, pick_string_map, pick_template_vars
 from .template_utils import build_message_template_context
-from .utils import clamp_int, new_id, normalize_language_mode, now_ms
+from .utils import clamp_int, new_id, normalize_language_mode, now_ms, text_for
 
 
 async def read_json_body() -> dict[str, Any]:
@@ -135,7 +138,7 @@ class ApiAggregatorCallTool(FunctionTool[AstrAgentContext]):
                 "strategy": {
                     "type": "string",
                     "description": "Aggregation strategy.",
-                    "enum": ["first-ok", "round-robin", "random"],
+                    "enum": ["first-ok", "round-robin", "random", "priority"],
                     "default": "first-ok",
                 },
                 "response_path": {
@@ -225,7 +228,7 @@ class ApiAggregatorCallTool(FunctionTool[AstrAgentContext]):
 
 @register(
     PLUGIN_NAME,
-    "OpenAI",
+    "Sean-CodingForLife",
     "Clean AstrBot WebUI plugin for managing and testing aggregated APIs.",
     VERSION,
     "",
@@ -273,6 +276,19 @@ class ApiAggregatorPlugin(Star):
         self._registered = False
         self._register_web_apis()
         self.context.add_llm_tools(ApiAggregatorCallTool(plugin=self))
+
+    @staticmethod
+    def _candidate_debug_summary(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": str(item.get("id") or ""),
+                "name": str(item.get("name") or ""),
+                "group_id": str(item.get("group_id") or ""),
+                "priority": int(item.get("priority") or 0),
+                "enabled": bool(item.get("enabled")),
+            }
+            for item in candidates
+        ]
 
     def _register_web_apis(self) -> None:
         if self._registered:
@@ -501,6 +517,9 @@ class ApiAggregatorPlugin(Star):
         api = next((item for item in data["apis"] if item["id"] == api_id), None)
         if not api:
             return fail("api not found", 404)
+        logger.info(
+            f"[api_aggregator] api_test start: api={api.get('name')}({api.get('id')}), template_var_keys={list(template_context.get('vars', {}).keys())}"
+        )
         result = await execute_api_request(
             api,
             ignore_cooldown=True,
@@ -524,6 +543,9 @@ class ApiAggregatorPlugin(Star):
         }
         data = await self.store.read()
         apis = [api for api in data["apis"] if api.get("enabled")]
+        logger.info(
+            f"[api_aggregator] api_test_all start: enabled_api_count={len(apis)}, api_ids={[api.get('id') for api in apis]}"
+        )
         results = [
             await execute_api_request(
                 api,
@@ -569,7 +591,13 @@ class ApiAggregatorPlugin(Star):
         data = await self.store.read()
         group_id, error = resolve_group_name(data, group_name)
         if error:
+            logger.info(
+                f"[api_aggregator] run_aggregate_by_group_name failed: group_name={group_name!r}, error={error}"
+            )
             return None, error, 404
+        logger.info(
+            f"[api_aggregator] run_aggregate_by_group_name resolved: group_name={group_name!r}, group_id={group_id}, strategy={strategy}"
+        )
         return await self.run_aggregate(str(group_id or "all"), strategy, template_context=template_context)
 
     async def run_aggregate(
@@ -582,18 +610,29 @@ class ApiAggregatorPlugin(Star):
         data = await self.store.read()
         strategy = strategy or str(data.get("settings", {}).get("strategy") or "first-ok")
         if strategy not in AGGREGATION_STRATEGIES:
+            logger.info(f"[api_aggregator] run_aggregate rejected: group_id={group_id}, strategy={strategy}, error=unknown aggregation strategy")
             return None, "unknown aggregation strategy", 400
         if group_id != "all" and not any(group["id"] == group_id for group in data["groups"]):
+            logger.info(f"[api_aggregator] run_aggregate rejected: group_id={group_id}, strategy={strategy}, error=group not found")
             return None, "group not found", 404
 
         candidates, start_index = ordered_candidates(data, group_id, strategy)
         if not candidates:
+            logger.info(f"[api_aggregator] run_aggregate rejected: group_id={group_id}, strategy={strategy}, error=no enabled API candidates")
             return None, "no enabled API candidates", 404
+        logger.info(
+            "[api_aggregator] run_aggregate candidates: "
+            f"group_id={group_id}, strategy={strategy}, start_index={start_index}, "
+            f"candidates={self._candidate_debug_summary(candidates)}"
+        )
 
         results: list[dict[str, Any]] = []
         selected: dict[str, Any] | None = None
         failure_reason = ""
         for api in candidates:
+            logger.info(
+                f"[api_aggregator] run_aggregate attempting candidate: api={api.get('name')}({api.get('id')}), group_id={group_id}, strategy={strategy}"
+            )
             result = await execute_api_request(
                 api,
                 response_read_limit_bytes=self.response_read_limit_bytes,
@@ -604,8 +643,14 @@ class ApiAggregatorPlugin(Star):
             results.append(result)
             if result.get("ok"):
                 selected = result
+                logger.info(
+                    f"[api_aggregator] run_aggregate selected candidate: api={api.get('name')}({api.get('id')}), status={result.get('status')}, elapsed_ms={result.get('elapsed_ms')}"
+                )
                 break
             failure_reason = str(result.get("error") or "request failed")
+            logger.info(
+                f"[api_aggregator] run_aggregate candidate failed: api={api.get('name')}({api.get('id')}), error_type={result.get('error_type')}, error={result.get('error')}"
+            )
 
         def mutate(next_data):
             for result in results:
@@ -623,6 +668,11 @@ class ApiAggregatorPlugin(Star):
             }
 
         aggregate_result, state = await self.store.mutate(mutate)
+        logger.info(
+            "[api_aggregator] run_aggregate finished: "
+            f"group_id={group_id}, strategy={strategy}, ok={aggregate_result.get('ok')}, "
+            f"attempt_count={len(results)}, selected_api_id={(selected or {}).get('api_id', '')}, failure_reason={failure_reason!r}"
+        )
         return aggregate_result, state, 200
 
     async def save_settings(self):
@@ -769,6 +819,9 @@ class ApiAggregatorPlugin(Star):
         api = next((item for item in data["apis"] if item["id"] == api_id), None)
         if not api:
             return fail("api not found", 404)
+        logger.info(
+            f"[api_aggregator] trigger_preview_response_path start: api={api.get('name')}({api.get('id')}), path={path!r}, sample_message={sample_message!r}"
+        )
         template_context = build_message_template_context(
             sample_message,
             None,
@@ -793,6 +846,9 @@ class ApiAggregatorPlugin(Star):
             )
 
         preview, state = await self.store.mutate(mutate)
+        logger.info(
+            f"[api_aggregator] trigger_preview_response_path finished: api={api.get('name')}({api.get('id')}), matched={preview.get('matched')}, body_kind={preview.get('body_kind')}, value_type={preview.get('value_type')}"
+        )
         return ok({"preview": preview, "result": result, "state": state})
 
     @filter.event_message_type(filter.EventMessageType.ALL)
@@ -808,11 +864,17 @@ class ApiAggregatorPlugin(Star):
         )
         for rule in triggers:
             if not trigger_matches(rule, message):
+                logger.info(
+                    f"[api_aggregator] trigger skipped: id={rule.get('id')}, trigger={rule.get('trigger')!r}, match_mode={rule.get('match_mode')}, reason=no_match"
+                )
                 continue
             logger.info(
                 f"[api_aggregator] trigger matched: id={rule.get('id')}, trigger={rule.get('trigger')!r}, group={rule.get('group_id')}, strategy={rule.get('strategy')}"
             )
             captured = capture_trigger_arguments(rule, message)
+            logger.info(
+                f"[api_aggregator] trigger arguments captured: id={rule.get('id')}, args_text={captured.get('args_text')!r}, args={captured.get('args')}"
+            )
             template_context = build_message_template_context(
                 message,
                 event,
@@ -826,10 +888,12 @@ class ApiAggregatorPlugin(Star):
             )
             if status == 200 and isinstance(result, dict):
                 logger.info(
-                    f"[api_aggregator] aggregate success: ok={result.get('ok')}, attempts={len(result.get('attempts') or [])}"
+                    f"[api_aggregator] aggregate completed for trigger: id={rule.get('id')}, ok={result.get('ok')}, attempts={len(result.get('attempts') or [])}, selected_api_id={(result.get('selected') or {}).get('api_id', '')}"
                 )
                 if not result.get("ok"):
-                    logger.info(f"[api_aggregator] aggregate attempts failed: {result.get('attempts')}")
+                    logger.info(
+                        f"[api_aggregator] aggregate attempts failed: trigger_id={rule.get('id')}, failure_reason={result.get('failure_reason')!r}, attempts={result.get('attempts')}"
+                    )
                     yield event.plain_result(
                         format_aggregate_reply(
                             result,
@@ -847,9 +911,7 @@ class ApiAggregatorPlugin(Star):
                     if image_url.startswith(("http://", "https://")):
                         yield event.image_result(image_url)
                     else:
-                        logger.info(
-                            f"[api_aggregator] image url extraction failed: path={response_path!r}, value={image_url!r}, selected={result.get('selected')}"
-                        )
+                        logger.info(f"[api_aggregator] image url extraction failed: path={response_path!r}, value={image_url!r}, selected={result.get('selected')}")
                         yield event.plain_result(
                             format_missing_url_reply(
                                 "image",
@@ -864,9 +926,7 @@ class ApiAggregatorPlugin(Star):
                     if audio_url.startswith(("http://", "https://")):
                         yield event.chain_result([Comp.Record(file=audio_url, url=audio_url)])
                     else:
-                        logger.info(
-                            f"[api_aggregator] audio url extraction failed: path={response_path!r}, value={audio_url!r}, selected={result.get('selected')}"
-                        )
+                        logger.info(f"[api_aggregator] audio url extraction failed: path={response_path!r}, value={audio_url!r}, selected={result.get('selected')}")
                         yield event.plain_result(
                             format_missing_url_reply(
                                 "audio",
@@ -881,9 +941,7 @@ class ApiAggregatorPlugin(Star):
                     if video_url.startswith(("http://", "https://")):
                         yield event.chain_result([Comp.Video.fromURL(url=video_url)])
                     else:
-                        logger.info(
-                            f"[api_aggregator] video url extraction failed: path={response_path!r}, value={video_url!r}, selected={result.get('selected')}"
-                        )
+                        logger.info(f"[api_aggregator] video url extraction failed: path={response_path!r}, value={video_url!r}, selected={result.get('selected')}")
                         yield event.plain_result(
                             format_missing_url_reply(
                                 "video",
@@ -896,6 +954,9 @@ class ApiAggregatorPlugin(Star):
                     try:
                         value = resolve_trigger_response_value(rule, result)
                     except Exception as exc:
+                        logger.warning(
+                            f"[api_aggregator] response transform failed: trigger_id={rule.get('id')}, transform={rule.get('response_transform')}, path={rule.get('response_path')!r}, error={exc}"
+                        )
                         value = text_for(
                             self.language_mode,
                             f"API Aggregator：响应转换失败：{exc}",

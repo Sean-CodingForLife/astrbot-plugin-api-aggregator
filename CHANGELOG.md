@@ -1,26 +1,31 @@
 # Changelog
 
-## Unreleased
-
-### 新增
-
-- 增加全局上游 API 代理配置 `proxy_url`，支持通过 AstrBot 插件设置让本插件请求统一走代理。
-
-### 优化
-
-- 优化仪表盘为更清爽的顶部导航布局，移除插件内二级侧栏，放宽 API 列表和非 API 页面内容空间。
-
-### 修复
-
-- 修复上游返回错误 `Content-Type` 时 JSON 文本被识别为普通文本的问题；现在文本响应内容以 `{` 或 `[` 开头且可成功解析为 JSON 时，会按 JSON 响应处理，以便 `response_path` 正常提取。
+## 0.2.0
 
 ### Changed
 
-- Redesigned the official AstrBot plugin Page dashboard with a responsive operations-console layout while keeping the existing `window.AstrBotPluginPage` bridge integration and backend API actions.
+- 将后端逻辑从 `main.py` 拆分为独立模块：`constants.py`、`utils.py`、`store.py`、`template_utils.py`、`request_utils.py`、`aggregation.py`
+- 将 HTTP 请求执行从同步 `urllib + asyncio.to_thread` 改为异步 `httpx.AsyncClient`
+- 明确声明运行依赖 `httpx>=0.27,<1`
+- 统一插件元数据、入口导出、文档和国际化文案
+- 移除前端对旧占位内容的兼容逻辑
 
 ### Added
 
-- Added AstrBot plugin configuration for default API timeout, response read limit, test log retention, and aggregate preview length.
-- Added `language_mode` configuration for Chinese/English dashboard text and localized trigger replies.
-- Added official AstrBot plugin i18n resources under `.astrbot-plugin/i18n/` and wired the dashboard to `bridge.t()` / `bridge.onContext()`.
-- Exposed runtime configuration to the dashboard state so newly created APIs use the configured default timeout.
+- 新增插件级配置：`language_mode`
+- 新增插件级配置：`default_timeout_seconds`
+- 新增插件级配置：`response_read_limit_bytes`
+- 新增插件级配置：`test_log_limit`
+- 新增插件级配置：`preview_max_chars`
+- 新增插件级配置：`proxy_mode`
+- 新增插件级配置：`proxy_url`
+- 新增更完整的请求、触发器和聚合诊断日志
+
+### Fixed
+
+- 修复拆分模块后插件包加载失败的问题，补充 `__init__.py` 并改为包相对导入
+- 修复 `main.py` 中缺失常量和工具函数导入导致的运行错误
+- 修复 `api_aggregator_call` 工具参数与实际支持策略不一致的问题
+- 修复 `settings.strategy` 在数据规范化过程中被触发器策略覆盖的问题
+- 修复多处乱码和文案不一致问题
+

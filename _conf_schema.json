@@ -1,8 +1,8 @@
 {
   "language_mode": {
-    "description": "语言模式。",
+    "description": "插件页语言模式。",
     "type": "string",
-    "hint": "auto 会让插件页按 AstrBot WebUI 当前语言显示；后端触发器回复在 auto 下保持英文。可选：auto、zh-CN、en-US。",
+    "hint": "auto 会跟随 AstrBot WebUI 当前语言显示。可选值：auto、zh-CN、en-US。",
     "options": [
       "auto",
       "zh-CN",
@@ -16,25 +16,25 @@
     "default": "auto"
   },
   "default_timeout_seconds": {
-    "description": "新增 API 时使用的默认请求超时时间（秒）。",
+    "description": "新建 API 时使用的默认请求超时秒数。",
     "type": "int",
     "hint": "默认 12，范围 1-120。单个 API 仍可在插件页单独覆盖。",
     "default": 12
   },
   "response_read_limit_bytes": {
-    "description": "上游 API 响应读取上限（字节）。提高后可解析更大的 JSON 响应，但会增加内存、日志和 WebUI 预览压力。",
+    "description": "单次请求最多读取的上游响应字节数。",
     "type": "int",
-    "hint": "默认 4096，范围 1-1048576。",
+    "hint": "默认 4096，范围 1-1048576。调高后可以处理更大的 JSON 响应，但会增加内存、日志和预览压力。",
     "default": 4096
   },
   "test_log_limit": {
-    "description": "测试日志最多保留条数。",
+    "description": "保留的测试日志条数上限。",
     "type": "int",
     "hint": "默认 100，范围 1-1000。调高后会增加插件数据文件体积。",
     "default": 100
   },
   "preview_max_chars": {
-    "description": "聚合摘要消息中响应预览的最大字符数。",
+    "description": "聚合摘要中响应预览的最大字符数。",
     "type": "int",
     "hint": "默认 1200，范围 1-10000。只影响摘要展示，不改变实际读取上限。",
     "default": 1200
@@ -42,7 +42,7 @@
   "proxy_mode": {
     "description": "外部 API 请求代理模式。",
     "type": "string",
-    "hint": "direct 表示直接访问目标 API；custom 表示使用下方代理地址；environment 表示使用 AstrBot 进程环境中的代理设置。",
+    "hint": "direct 为直连，custom 使用下方代理地址，environment 使用 AstrBot 进程环境中的代理设置。",
     "options": [
       "direct",
       "custom",
@@ -56,9 +56,10 @@
     "default": "direct"
   },
   "proxy_url": {
-    "description": "外部 API 请求代理地址。",
+    "description": "自定义代理地址。",
     "type": "string",
-    "hint": "仅在 proxy_mode 为 custom 时生效。支持 http://、https://，未写协议时按 http:// 处理。",
+    "hint": "仅在 proxy_mode 为 custom 时生效。支持 http:// 和 https://；省略协议时按 http:// 处理。",
     "default": ""
   }
 }
+

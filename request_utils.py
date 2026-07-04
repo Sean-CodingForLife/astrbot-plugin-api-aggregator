@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import ProxyHandler, Request, build_opener
+
+import httpx
+from astrbot.api import logger
 
 from .constants import (
     DEFAULT_RESPONSE_READ_LIMIT_BYTES,
@@ -20,7 +20,21 @@ from .template_utils import build_template_context, render_string_map_templates,
 from .utils import clamp_int, now_ms
 
 
-def build_request(api: dict[str, Any], template_context: dict[str, Any] | None = None) -> Request:
+def _request_debug_summary(request_args: dict[str, Any]) -> dict[str, Any]:
+    headers = dict(request_args.get("headers") or {})
+    content_type = str(headers.get("Content-Type") or headers.get("content-type") or "")
+    content = request_args.get("content")
+    body_size = len(content) if isinstance(content, (bytes, bytearray)) else 0
+    return {
+        "method": str(request_args.get("method") or "GET"),
+        "url": str(request_args.get("url") or ""),
+        "header_count": len(headers),
+        "content_type": content_type,
+        "body_size": body_size,
+    }
+
+
+def build_request(api: dict[str, Any], template_context: dict[str, Any] | None = None) -> dict[str, Any]:
     context = build_template_context(api, template_context)
     url = render_template_string(api.get("url"), context).strip()
     query = render_string_map_templates(api.get("query"), context)
@@ -30,11 +44,16 @@ def build_request(api: dict[str, Any], template_context: dict[str, Any] | None =
         url = f"{url}{separator}{urlencode(query)}"
     method = str(api.get("method") or "GET").upper()
     body_text = render_template_string(api.get("body"), context, allow_json_value=True)
-    data = None
+    content = None
     if method in {"POST", "PUT", "PATCH", "DELETE"}:
-        data = body_text.encode("utf-8") if body_text else b""
+        content = body_text.encode("utf-8") if body_text else b""
         headers.setdefault("Content-Type", "application/json; charset=utf-8")
-    return Request(url, data=data, headers=headers, method=method)
+    return {
+        "method": method,
+        "url": url,
+        "headers": headers,
+        "content": content,
+    }
 
 
 def normalize_proxy_mode(value: Any, *, proxy_url_value: Any = "") -> str:
@@ -72,17 +91,19 @@ def resolve_proxy_config(mode_value: Any, url_value: Any) -> tuple[str, str, str
     return proxy_mode, normalized_proxy_url, "custom", ""
 
 
-def open_request(req: Request, *, timeout: int, proxy_mode: str = "direct", proxy_url: str = ""):
+def build_client_kwargs(*, proxy_mode: str = "direct", proxy_url: str = "") -> dict[str, Any]:
     proxy_mode = normalize_proxy_mode(proxy_mode, proxy_url_value=proxy_url)
     if proxy_mode == "environment":
-        return build_opener(ProxyHandler()).open(req, timeout=timeout)
+        return {"trust_env": True}
     if proxy_mode == "direct":
-        return build_opener(ProxyHandler({})).open(req, timeout=timeout)
-    proxy_url = normalize_proxy_url(proxy_url)
-    if not proxy_url:
-        return build_opener(ProxyHandler({})).open(req, timeout=timeout)
-    proxies = {"http": proxy_url, "https": proxy_url}
-    return build_opener(ProxyHandler(proxies)).open(req, timeout=timeout)
+        return {"trust_env": False}
+    normalized_proxy_url = normalize_proxy_url(proxy_url)
+    if not normalized_proxy_url:
+        return {"trust_env": False}
+    return {
+        "trust_env": False,
+        "proxy": normalized_proxy_url,
+    }
 
 
 def _cooldown_remaining_ms(api: dict[str, Any]) -> int:
@@ -129,26 +150,30 @@ def _build_attempt_result(
 def classify_request_error(exc: Exception) -> str:
     if isinstance(exc, ValueError) and "template variable" in str(exc).lower():
         return "template_error"
-    if isinstance(exc, HTTPError):
-        return "http_error"
-    if isinstance(exc, TimeoutError):
+    if isinstance(exc, httpx.TimeoutException):
         return "timeout"
-    if isinstance(exc, URLError):
-        reason = str(getattr(exc, "reason", "") or exc)
-        lowered = reason.lower()
-        if "timed out" in lowered or "timeout" in lowered:
-            return "timeout"
-        if "ssl" in lowered or "handshake" in lowered:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return "http_error"
+    if isinstance(exc, httpx.ConnectError):
+        lowered = str(exc).lower()
+        if "ssl" in lowered or "tls" in lowered or "handshake" in lowered:
             return "ssl_error"
-        if "name or service not known" in lowered or "could not resolve" in lowered:
+        if "name or service not known" in lowered or "nodename nor servname provided" in lowered or "getaddrinfo" in lowered:
             return "dns_error"
+        return "connection_error"
+    if isinstance(exc, httpx.ProxyError):
+        return "proxy_error"
+    if isinstance(exc, httpx.NetworkError):
+        lowered = str(exc).lower()
+        if "ssl" in lowered or "tls" in lowered or "handshake" in lowered:
+            return "ssl_error"
         return "connection_error"
     lowered = str(exc).lower()
     if "timed out" in lowered or "timeout" in lowered:
         return "timeout"
-    if "ssl" in lowered or "handshake" in lowered:
+    if "ssl" in lowered or "tls" in lowered or "handshake" in lowered:
         return "ssl_error"
-    if "could not resolve" in lowered or "remote name could not be resolved" in lowered:
+    if "could not resolve" in lowered or "remote name could not be resolved" in lowered or "getaddrinfo" in lowered:
         return "dns_error"
     return "request_error"
 
@@ -233,6 +258,9 @@ async def execute_api_request(
 ) -> dict[str, Any]:
     circuit_remaining_ms = _circuit_remaining_ms(api)
     if circuit_remaining_ms > 0 and not ignore_cooldown:
+        logger.info(
+            f"[api_aggregator] request skipped: api={api.get('name')}({api.get('id')}), reason=circuit_open, remaining_ms={circuit_remaining_ms}"
+        )
         return {
             "api_id": api["id"],
             "api_name": api["name"],
@@ -255,6 +283,9 @@ async def execute_api_request(
         }
     cooldown_remaining_ms = _cooldown_remaining_ms(api)
     if cooldown_remaining_ms > 0 and not ignore_cooldown:
+        logger.info(
+            f"[api_aggregator] request skipped: api={api.get('name')}({api.get('id')}), reason=cooldown, remaining_ms={cooldown_remaining_ms}"
+        )
         return {
             "api_id": api["id"],
             "api_name": api["name"],
@@ -291,65 +322,77 @@ async def execute_api_request(
     )
     attempts: list[dict[str, Any]] = []
 
-    def run_once() -> dict[str, Any]:
-        req = build_request(api, template_context)
-        with open_request(
-            req,
-            timeout=timeout_seconds,
-            proxy_mode=proxy_mode,
-            proxy_url=proxy_url,
-        ) as response:
-            raw = response.read(read_limit)
-            content_type = str(response.headers.get("Content-Type", "") or "")
-            payload = build_response_payload(content_type, raw)
-            return {
-                "status": getattr(response, "status", None),
-                "content_type": content_type,
-                "body_kind": payload["body_kind"],
-                "body_data": payload["body_data"],
-                "preview": payload["preview"],
-            }
+    request_args = build_request(api, template_context)
+    logger.info(
+        f"[api_aggregator] request prepared: api={api.get('name')}({api.get('id')}), summary={_request_debug_summary(request_args)}"
+    )
+    client_kwargs = build_client_kwargs(proxy_mode=proxy_mode, proxy_url=proxy_url)
 
-    for attempt in range(1, retry_count + 2):
-        started = time.perf_counter()
-        try:
-            result = await asyncio.to_thread(run_once)
-            elapsed = int((time.perf_counter() - started) * 1000)
-            attempts.append(
-                _build_attempt_result(
-                    api,
-                    ok_flag=True,
-                    elapsed_ms=elapsed,
-                    status=result.get("status"),
-                    content_type=str(result.get("content_type") or ""),
-                    body_kind=str(result.get("body_kind") or ""),
-                    body_data=result.get("body_data"),
-                    preview=str(result.get("preview") or ""),
-                    error="",
-                    error_type="",
-                    attempt=attempt,
+    timeout = httpx.Timeout(timeout_seconds)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, **client_kwargs) as client:
+        for attempt in range(1, retry_count + 2):
+            started = time.perf_counter()
+            try:
+                response = await client.request(**request_args)
+                response.raise_for_status()
+                raw = await response.aread()
+                if len(raw) > read_limit:
+                    raw = raw[:read_limit]
+                content_type = str(response.headers.get("Content-Type", "") or "")
+                payload = build_response_payload(content_type, raw)
+                elapsed = int((time.perf_counter() - started) * 1000)
+                logger.info(
+                    "[api_aggregator] request attempt success: "
+                    f"api={api.get('name')}({api.get('id')}), attempt={attempt}/{retry_count + 1}, "
+                    f"status={response.status_code}, body_kind={payload.get('body_kind')}, elapsed_ms={elapsed}, "
+                    f"content_type={content_type!r}"
                 )
-            )
-            break
-        except Exception as exc:
-            elapsed = int((time.perf_counter() - started) * 1000)
-            attempts.append(
-                _build_attempt_result(
-                    api,
-                    ok_flag=False,
-                    elapsed_ms=elapsed,
-                    status=None,
-                    content_type="",
-                    body_kind="",
-                    body_data=None,
-                    preview="",
-                    error=str(exc),
-                    error_type=classify_request_error(exc),
-                    attempt=attempt,
+                attempts.append(
+                    _build_attempt_result(
+                        api,
+                        ok_flag=True,
+                        elapsed_ms=elapsed,
+                        status=response.status_code,
+                        content_type=content_type,
+                        body_kind=str(payload.get("body_kind") or ""),
+                        body_data=payload.get("body_data"),
+                        preview=str(payload.get("preview") or ""),
+                        error="",
+                        error_type="",
+                        attempt=attempt,
+                    )
                 )
-            )
+                break
+            except Exception as exc:
+                elapsed = int((time.perf_counter() - started) * 1000)
+                error_type = classify_request_error(exc)
+                logger.warning(
+                    "[api_aggregator] request attempt failed: "
+                    f"api={api.get('name')}({api.get('id')}), attempt={attempt}/{retry_count + 1}, "
+                    f"error_type={error_type}, elapsed_ms={elapsed}, error={exc}"
+                )
+                attempts.append(
+                    _build_attempt_result(
+                        api,
+                        ok_flag=False,
+                        elapsed_ms=elapsed,
+                        status=None,
+                        content_type="",
+                        body_kind="",
+                        body_data=None,
+                        preview="",
+                        error=str(exc),
+                        error_type=error_type,
+                        attempt=attempt,
+                    )
+                )
 
     final_attempt = attempts[-1]
+    logger.info(
+        "[api_aggregator] request finished: "
+        f"api={api.get('name')}({api.get('id')}), ok={final_attempt.get('ok')}, attempt_count={len(attempts)}, "
+        f"final_status={final_attempt.get('status')}, final_error_type={final_attempt.get('error_type') or ''}"
+    )
     return {
         **final_attempt,
         "attempts": attempts,

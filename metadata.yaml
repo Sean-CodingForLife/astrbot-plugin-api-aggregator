@@ -2,6 +2,6 @@ name: astrbot_plugin_api_aggregator
 display_name: API Aggregator
 desc: Clean AstrBot WebUI plugin for managing and testing aggregated APIs.
 version: 0.2.0
-author: OpenAI
+author: Sean-CodingForLife
 repo: "https://github.com/Sean-CodingForLife/astrbot-plugin-api-aggregator"
 astrbot_version: ">=4.26,<5"

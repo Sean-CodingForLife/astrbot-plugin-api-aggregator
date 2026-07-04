@@ -77,13 +77,13 @@ function applyTranslations() {
   setText("#testAllBtn", "testEnabled");
   setText("#addApiBtn", "addApi");
   setText("#clearLogViewBtn", "clearView");
-  if (["No aggregate call yet.", "尚未执行聚合调用。"].includes($("aggregateOutput").textContent.trim())) {
+  if (!$("aggregateOutput").textContent.trim()) {
     $("aggregateOutput").textContent = t("noAggregate");
   }
-  if (["Waiting for action...", "等待操作..."].includes($("logOutput").textContent.trim())) {
+  if (!$("logOutput").textContent.trim()) {
     $("logOutput").textContent = t("waiting");
   }
-  if ($("importOutput") && ["No import or export action yet.", "尚未执行导入或导出操作。"].includes($("importOutput").textContent.trim())) {
+  if ($("importOutput") && !$("importOutput").textContent.trim()) {
     $("importOutput").textContent = t("importOutputEmpty");
   }
   setLabelText("apiName", "name");

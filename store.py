@@ -124,9 +124,9 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
         )
 
     cleaned_logs = [item for item in logs if isinstance(item, dict)][-MAX_TEST_LOG_LIMIT:]
-    strategy = str(settings.get("strategy") or "first-ok")
-    if strategy not in AGGREGATION_STRATEGIES:
-        strategy = "first-ok"
+    settings_strategy = str(settings.get("strategy") or "first-ok")
+    if settings_strategy not in AGGREGATION_STRATEGIES:
+        settings_strategy = "first-ok"
     cursors = settings.get("cursors") if isinstance(settings.get("cursors"), dict) else {}
     cleaned_cursors: dict[str, int] = {}
     for key, value in cursors.items():
@@ -150,9 +150,9 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
         mode = str(item.get("match_mode") or "contains").strip()
         if mode not in TRIGGER_MATCH_MODES:
             mode = "contains"
-        strategy = str(item.get("strategy") or "first-ok").strip()
-        if strategy not in AGGREGATION_STRATEGIES:
-            strategy = "first-ok"
+        trigger_strategy = str(item.get("strategy") or "first-ok").strip()
+        if trigger_strategy not in AGGREGATION_STRATEGIES:
+            trigger_strategy = "first-ok"
         cleaned_triggers.append(
             {
                 "id": trigger_id,
@@ -160,7 +160,7 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
                 "trigger": phrase,
                 "match_mode": mode,
                 "group_id": str(item.get("group_id") or "all").strip() or "all",
-                "strategy": strategy,
+                "strategy": trigger_strategy,
                 "preview_api_id": str(item.get("preview_api_id") or "").strip(),
                 "stop_event": bool(item.get("stop_event", True)),
                 "response_type": str(item.get("response_type") or "summary")
@@ -179,7 +179,7 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
         "apis": cleaned_apis,
         "test_logs": cleaned_logs,
         "settings": {
-            "strategy": strategy,
+            "strategy": settings_strategy,
             "cursors": cleaned_cursors,
             "triggers": cleaned_triggers,
         },
