@@ -39,10 +39,26 @@
     "hint": "默认 1200，范围 1-10000。只影响摘要展示，不改变实际读取上限。",
     "default": 1200
   },
-  "proxy_url": {
-    "description": "上游 API 请求代理地址。",
+  "proxy_mode": {
+    "description": "外部 API 请求代理模式。",
     "type": "string",
-    "hint": "留空表示不使用代理。支持 http://、https://，未写协议时按 http:// 处理。该代理只用于本插件调用上游 API。",
+    "hint": "direct 表示直接访问目标 API；custom 表示使用下方代理地址；environment 表示使用 AstrBot 进程环境中的代理设置。",
+    "options": [
+      "direct",
+      "custom",
+      "environment"
+    ],
+    "labels": [
+      "直连",
+      "自定义代理",
+      "环境代理"
+    ],
+    "default": "direct"
+  },
+  "proxy_url": {
+    "description": "外部 API 请求代理地址。",
+    "type": "string",
+    "hint": "仅在 proxy_mode 为 custom 时生效。支持 http://、https://，未写协议时按 http:// 处理。",
     "default": ""
   }
 }

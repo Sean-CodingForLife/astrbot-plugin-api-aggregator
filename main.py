@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import os
 import random
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import ProxyHandler, Request, build_opener, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from pydantic import Field as PydanticField
 from pydantic.dataclasses import dataclass as pydantic_dataclass
@@ -28,10 +32,23 @@ from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 PLUGIN_NAME = "astrbot_plugin_api_aggregator"
 VERSION = "0.2.0"
 DATA_VERSION = 1
-AGGREGATION_STRATEGIES = {"first-ok", "round-robin", "random"}
+AGGREGATION_STRATEGIES = {"first-ok", "round-robin", "random", "priority"}
 TRIGGER_MATCH_MODES = {"contains", "exact", "command"}
 RESPONSE_TYPES = {"summary", "text", "image", "audio", "video"}
 LANGUAGE_MODES = {"auto", "zh-CN", "en-US"}
+PROXY_MODES = {"direct", "custom", "environment"}
+AUTH_TYPES = {"none", "bearer", "basic", "api-key"}
+API_KEY_IN_VALUES = {"header", "query"}
+RESPONSE_TRANSFORMS = {
+    "raw",
+    "string",
+    "json",
+    "join-comma",
+    "join-lines",
+    "int",
+    "float",
+    "bool",
+}
 DEFAULT_LANGUAGE_MODE = "auto"
 DEFAULT_TIMEOUT_SECONDS = 12
 MAX_TIMEOUT_SECONDS = 120
@@ -44,6 +61,7 @@ MAX_TEST_LOG_LIMIT = 1000
 DEFAULT_PREVIEW_MAX_CHARS = 1200
 MAX_PREVIEW_MAX_CHARS = 10000
 SUPPORTED_PROXY_SCHEMES = {"http", "https"}
+TEMPLATE_PATTERN = re.compile(r"{{\s*([^{}]+?)\s*}}")
 
 
 @dataclass
@@ -141,6 +159,13 @@ def normalize_language_mode(value: Any) -> str:
     return mode if mode in LANGUAGE_MODES else DEFAULT_LANGUAGE_MODE
 
 
+def normalize_proxy_mode(value: Any, *, proxy_url_value: Any = "") -> str:
+    mode = str(value or "").strip()
+    if mode in PROXY_MODES:
+        return mode
+    return "direct"
+
+
 def runtime_language(value: Any) -> str:
     mode = normalize_language_mode(value)
     return "en-US" if mode == "auto" else mode
@@ -215,6 +240,11 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
                 "query": dict(item.get("query") or {}) if isinstance(item.get("query"), dict) else {},
                 "headers": dict(item.get("headers") or {}) if isinstance(item.get("headers"), dict) else {},
                 "body": str(item.get("body") or ""),
+                "auth_type": normalize_auth_type(item.get("auth_type")),
+                "auth_config": normalize_auth_config(item.get("auth_config")),
+                "priority": clamp_int(item.get("priority"), 100, 1, 1000),
+                "circuit_failures": max(0, int(item.get("circuit_failures") or 0)),
+                "circuit_open_until": max(0, int(item.get("circuit_open_until") or 0)),
                 "enabled": bool(item.get("enabled", True)),
                 "description": str(item.get("description") or ""),
                 "timeout_seconds": clamp_int(
@@ -290,6 +320,8 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
                 if str(item.get("response_type") or "summary") in RESPONSE_TYPES
                 else "summary",
                 "response_path": str(item.get("response_path") or "").strip(),
+                "response_default": str(item.get("response_default") or ""),
+                "response_transform": normalize_response_transform(item.get("response_transform")),
                 "created_at": int(item.get("created_at") or now_ms()),
                 "updated_at": int(item.get("updated_at") or now_ms()),
             }
@@ -332,6 +364,216 @@ def pick_string_map(value: Any) -> dict[str, str]:
     return result
 
 
+def pick_template_vars(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def normalize_auth_type(value: Any) -> str:
+    auth_type = str(value or "none").strip().lower()
+    return auth_type if auth_type in AUTH_TYPES else "none"
+
+
+def normalize_api_key_in(value: Any) -> str:
+    location = str(value or "header").strip().lower()
+    return location if location in API_KEY_IN_VALUES else "header"
+
+
+def normalize_response_transform(value: Any) -> str:
+    transform = str(value or "raw").strip().lower()
+    return transform if transform in RESPONSE_TRANSFORMS else "raw"
+
+
+def normalize_auth_config(value: Any) -> dict[str, str]:
+    raw = value if isinstance(value, dict) else {}
+    return {
+        "token": str(raw.get("token") or ""),
+        "username": str(raw.get("username") or ""),
+        "password": str(raw.get("password") or ""),
+        "key_name": str(raw.get("key_name") or ""),
+        "key_value": str(raw.get("key_value") or ""),
+        "api_key_in": normalize_api_key_in(raw.get("api_key_in")),
+    }
+
+
+def resolve_data_path(source: Any, path: str) -> Any:
+    current = source
+    for part in [item for item in path.replace("[", ".").replace("]", "").split(".") if item]:
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return current
+
+
+def build_template_context(
+    api: dict[str, Any],
+    extra_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    context = {
+        "api": {
+            "id": str(api.get("id") or ""),
+            "name": str(api.get("name") or ""),
+            "group_id": str(api.get("group_id") or ""),
+            "method": str(api.get("method") or ""),
+            "url": str(api.get("url") or ""),
+        },
+        "time": {
+            "unix": int(now.timestamp()),
+            "unix_ms": int(now.timestamp() * 1000),
+            "iso": now.isoformat().replace("+00:00", "Z"),
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M:%S"),
+        },
+        "random": {
+            "int": random.randint(0, 999999),
+            "hex": uuid.uuid4().hex[:12],
+            "uuid": uuid.uuid4().hex,
+        },
+        "env": dict(os.environ),
+        "vars": {},
+        "message": {
+            "text": "",
+            "command": "",
+            "args_text": "",
+            "args": [],
+        },
+        "session": {},
+        "trigger": {},
+    }
+    if isinstance(extra_context, dict):
+        for key, value in extra_context.items():
+            if isinstance(value, dict) and isinstance(context.get(key), dict):
+                context[key] = {**context[key], **value}
+            else:
+                context[key] = value
+    return context
+
+
+def render_template_string(
+    template: Any,
+    context: dict[str, Any],
+    *,
+    allow_json_value: bool = False,
+) -> str:
+    text = str(template or "")
+    exact_match = TEMPLATE_PATTERN.fullmatch(text)
+    if exact_match:
+        value = resolve_data_path(context, exact_match.group(1).strip())
+        if value is None:
+            raise ValueError(f"missing template variable: {exact_match.group(1).strip()}")
+        if allow_json_value and isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
+    def replace(match: re.Match[str]) -> str:
+        path = match.group(1).strip()
+        value = resolve_data_path(context, path)
+        if value is None:
+            raise ValueError(f"missing template variable: {path}")
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
+    return TEMPLATE_PATTERN.sub(replace, text)
+
+
+def render_string_map_templates(value: Any, context: dict[str, Any]) -> dict[str, str]:
+    raw_map = pick_string_map(value)
+    return {
+        key: render_template_string(item, context)
+        for key, item in raw_map.items()
+    }
+
+
+def render_auth_config(value: Any, context: dict[str, Any]) -> dict[str, str]:
+    raw = normalize_auth_config(value)
+    return {
+        "token": render_template_string(raw.get("token"), context),
+        "username": render_template_string(raw.get("username"), context),
+        "password": render_template_string(raw.get("password"), context),
+        "key_name": render_template_string(raw.get("key_name"), context),
+        "key_value": render_template_string(raw.get("key_value"), context),
+        "api_key_in": normalize_api_key_in(raw.get("api_key_in")),
+    }
+
+
+def _event_scalar(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    return ""
+
+
+def build_message_template_context(
+    message: str,
+    event: AstrMessageEvent | None = None,
+    rule: dict[str, Any] | None = None,
+    template_vars: dict[str, Any] | None = None,
+    trigger_args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    text = str(message or "")
+    parts = text.split(maxsplit=1)
+    command = parts[0] if parts else ""
+    args_text = parts[1] if len(parts) > 1 else ""
+    args = args_text.split() if args_text else []
+    if isinstance(trigger_args, dict):
+        args_text = str(trigger_args.get("args_text") or args_text)
+        captured_args = trigger_args.get("args")
+        args = list(captured_args) if isinstance(captured_args, list) else (args_text.split() if args_text else [])
+    session = {}
+    if event is not None:
+        for source_name, target_name in {
+            "session_id": "id",
+            "conversation_id": "conversation_id",
+            "user_id": "user_id",
+            "sender_id": "sender_id",
+            "room_id": "room_id",
+            "message_id": "message_id",
+            "platform": "platform",
+            "self_id": "self_id",
+        }.items():
+            scalar = _event_scalar(getattr(event, source_name, None))
+            if scalar:
+                session[target_name] = scalar
+    trigger = {}
+    if isinstance(rule, dict):
+        trigger = {
+            "id": str(rule.get("id") or ""),
+            "phrase": str(rule.get("trigger") or ""),
+            "match_mode": str(rule.get("match_mode") or ""),
+            "group_id": str(rule.get("group_id") or ""),
+            "strategy": str(rule.get("strategy") or ""),
+            "args_text": args_text,
+            "args": args,
+        }
+    vars_payload = pick_template_vars(template_vars)
+    if isinstance(trigger_args, dict):
+        vars_payload.setdefault("trigger_args", {"args_text": args_text, "args": args})
+    return {
+        "message": {
+            "text": text,
+            "command": command,
+            "args_text": args_text,
+            "args": args,
+        },
+        "command": {
+            "name": command,
+            "args_text": args_text,
+            "args": args,
+        },
+        "session": session,
+        "trigger": trigger,
+        "vars": vars_payload,
+    }
+
+
 def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
     base = dict(existing or {})
     name = str(payload.get("name", base.get("name", "")) or "").strip()
@@ -354,6 +596,11 @@ def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None =
         "query": pick_string_map(payload.get("query", base.get("query", {}))),
         "headers": pick_string_map(payload.get("headers", base.get("headers", {}))),
         "body": str(payload.get("body", base.get("body", "")) or ""),
+        "auth_type": normalize_auth_type(payload.get("auth_type", base.get("auth_type", "none"))),
+        "auth_config": normalize_auth_config(payload.get("auth_config", base.get("auth_config", {}))),
+        "priority": clamp_int(payload.get("priority", base.get("priority", 100)), 100, 1, 1000),
+        "circuit_failures": max(0, int(base.get("circuit_failures") or 0)),
+        "circuit_open_until": max(0, int(base.get("circuit_open_until") or 0)),
         "enabled": bool(payload.get("enabled", base.get("enabled", True))),
         "description": str(payload.get("description", base.get("description", "")) or ""),
         "timeout_seconds": clamp_int(
@@ -381,15 +628,28 @@ def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None =
     }
 
 
-def build_request(api: dict[str, Any]) -> Request:
-    url = str(api.get("url") or "").strip()
-    query = pick_string_map(api.get("query"))
+def build_request(api: dict[str, Any], template_context: dict[str, Any] | None = None) -> Request:
+    context = build_template_context(api, template_context)
+    url = render_template_string(api.get("url"), context).strip()
+    query = render_string_map_templates(api.get("query"), context)
+    headers = render_string_map_templates(api.get("headers"), context)
+    auth_type = normalize_auth_type(api.get("auth_type"))
+    auth_config = render_auth_config(api.get("auth_config"), context)
+    if auth_type == "bearer" and auth_config.get("token"):
+        headers.setdefault("Authorization", f"Bearer {auth_config['token']}")
+    elif auth_type == "basic" and auth_config.get("username"):
+        user_pass = f"{auth_config['username']}:{auth_config.get('password', '')}".encode("utf-8")
+        headers.setdefault("Authorization", f"Basic {base64.b64encode(user_pass).decode('ascii')}")
+    elif auth_type == "api-key" and auth_config.get("key_name"):
+        if auth_config.get("api_key_in") == "query":
+            query.setdefault(auth_config["key_name"], auth_config.get("key_value", ""))
+        else:
+            headers.setdefault(auth_config["key_name"], auth_config.get("key_value", ""))
     if query:
         separator = "&" if "?" in url else "?"
         url = f"{url}{separator}{urlencode(query)}"
-    headers = pick_string_map(api.get("headers"))
     method = str(api.get("method") or "GET").upper()
-    body_text = str(api.get("body") or "")
+    body_text = render_template_string(api.get("body"), context, allow_json_value=True)
     data = None
     if method in {"POST", "PUT", "PATCH", "DELETE"}:
         data = body_text.encode("utf-8") if body_text else b""
@@ -411,10 +671,27 @@ def normalize_proxy_url(value: Any) -> str:
     return proxy_url
 
 
-def open_request(req: Request, *, timeout: int, proxy_url: str = ""):
+def resolve_proxy_config(mode_value: Any, url_value: Any) -> tuple[str, str, str, str]:
+    proxy_mode = normalize_proxy_mode(mode_value, proxy_url_value=url_value)
+    if proxy_mode == "direct":
+        return proxy_mode, "", "direct", ""
+    if proxy_mode == "environment":
+        return proxy_mode, "", "environment", ""
+    normalized_proxy_url = normalize_proxy_url(url_value)
+    if not normalized_proxy_url:
+        return proxy_mode, "", "invalid", "proxy_url must use http:// or https://"
+    return proxy_mode, normalized_proxy_url, "custom", ""
+
+
+def open_request(req: Request, *, timeout: int, proxy_mode: str = "direct", proxy_url: str = ""):
+    proxy_mode = normalize_proxy_mode(proxy_mode, proxy_url_value=proxy_url)
+    if proxy_mode == "environment":
+        return build_opener(ProxyHandler()).open(req, timeout=timeout)
+    if proxy_mode == "direct":
+        return build_opener(ProxyHandler({})).open(req, timeout=timeout)
     proxy_url = normalize_proxy_url(proxy_url)
     if not proxy_url:
-        return urlopen(req, timeout=timeout)
+        return build_opener(ProxyHandler({})).open(req, timeout=timeout)
     proxies = {"http": proxy_url, "https": proxy_url}
     return build_opener(ProxyHandler(proxies)).open(req, timeout=timeout)
 
@@ -422,6 +699,11 @@ def open_request(req: Request, *, timeout: int, proxy_url: str = ""):
 def _cooldown_remaining_ms(api: dict[str, Any]) -> int:
     cooldown_until = max(0, int(api.get("cooldown_until") or 0))
     return max(0, cooldown_until - now_ms())
+
+
+def _circuit_remaining_ms(api: dict[str, Any]) -> int:
+    circuit_open_until = max(0, int(api.get("circuit_open_until") or 0))
+    return max(0, circuit_open_until - now_ms())
 
 
 def _build_attempt_result(
@@ -456,6 +738,8 @@ def _build_attempt_result(
 
 
 def classify_request_error(exc: Exception) -> str:
+    if isinstance(exc, ValueError) and "template variable" in str(exc).lower():
+        return "template_error"
     if isinstance(exc, HTTPError):
         return "http_error"
     if isinstance(exc, TimeoutError):
@@ -554,8 +838,32 @@ async def execute_api_request(
     *,
     ignore_cooldown: bool = False,
     response_read_limit_bytes: int = DEFAULT_RESPONSE_READ_LIMIT_BYTES,
+    proxy_mode: str = "direct",
     proxy_url: str = "",
+    template_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    circuit_remaining_ms = _circuit_remaining_ms(api)
+    if circuit_remaining_ms > 0 and not ignore_cooldown:
+        return {
+            "api_id": api["id"],
+            "api_name": api["name"],
+            "ok": False,
+            "elapsed_ms": 0,
+            "status": None,
+            "content_type": "",
+            "body_kind": "",
+            "body_data": None,
+            "preview": "",
+            "error": f"API circuit is open for {circuit_remaining_ms} ms",
+            "error_type": "circuit_open",
+            "tested_at": now_ms(),
+            "attempts": [],
+            "attempt_count": 0,
+            "cooldown_skipped": True,
+            "cooldown_remaining_ms": 0,
+            "circuit_open": True,
+            "circuit_remaining_ms": circuit_remaining_ms,
+        }
     cooldown_remaining_ms = _cooldown_remaining_ms(api)
     if cooldown_remaining_ms > 0 and not ignore_cooldown:
         return {
@@ -575,6 +883,8 @@ async def execute_api_request(
             "attempt_count": 0,
             "cooldown_skipped": True,
             "cooldown_remaining_ms": cooldown_remaining_ms,
+            "circuit_open": False,
+            "circuit_remaining_ms": 0,
         }
 
     timeout_seconds = clamp_int(
@@ -593,8 +903,13 @@ async def execute_api_request(
     attempts: list[dict[str, Any]] = []
 
     def run_once() -> dict[str, Any]:
-        req = build_request(api)
-        with open_request(req, timeout=timeout_seconds, proxy_url=proxy_url) as response:
+        req = build_request(api, template_context)
+        with open_request(
+            req,
+            timeout=timeout_seconds,
+            proxy_mode=proxy_mode,
+            proxy_url=proxy_url,
+        ) as response:
             raw = response.read(read_limit)
             content_type = str(response.headers.get("Content-Type", "") or "")
             payload = build_response_payload(content_type, raw)
@@ -652,6 +967,8 @@ async def execute_api_request(
         "attempt_count": len(attempts),
         "cooldown_skipped": False,
         "cooldown_remaining_ms": 0,
+        "circuit_open": False,
+        "circuit_remaining_ms": 0,
     }
 
 
@@ -695,6 +1012,14 @@ def ordered_candidates(data: dict[str, Any], group_id: str, strategy: str) -> tu
         shuffled = list(candidates)
         random.shuffle(shuffled)
         return shuffled, None
+    if strategy == "priority":
+        return sorted(
+            candidates,
+            key=lambda item: (
+                clamp_int(item.get("priority"), 100, 1, 1000),
+                int(item.get("created_at") or 0),
+            ),
+        ), None
     if strategy == "round-robin":
         cursors = data.get("settings", {}).get("cursors", {})
         cursor = int(cursors.get(group_id, 0)) if isinstance(cursors, dict) else 0
@@ -717,6 +1042,14 @@ def record_test_result(
             item["last_tested_at"] = result["tested_at"]
             item["last_preview"] = result.get("preview") or result.get("error") or ""
             item["last_error"] = str(result.get("error") or "")
+            if result.get("ok"):
+                item["circuit_failures"] = 0
+                item["circuit_open_until"] = 0
+            elif not result.get("circuit_open") and not result.get("cooldown_skipped"):
+                failures = max(0, int(item.get("circuit_failures") or 0)) + 1
+                item["circuit_failures"] = failures
+                if failures >= 3:
+                    item["circuit_open_until"] = result["tested_at"] + 60 * 1000
             cooldown_seconds = clamp_int(
                 item.get("cooldown_seconds"),
                 0,
@@ -746,6 +1079,26 @@ def trigger_matches(rule: dict[str, Any], message: str) -> bool:
     if mode == "command":
         return message.split(maxsplit=1)[0] == trigger
     return trigger in message
+
+
+def capture_trigger_arguments(rule: dict[str, Any], message: str) -> dict[str, Any]:
+    trigger = str(rule.get("trigger") or "").strip()
+    mode = str(rule.get("match_mode") or "contains")
+    message = message.strip()
+    args_text = ""
+    if mode == "command":
+        if message.startswith(trigger):
+            args_text = message[len(trigger):].strip()
+    elif mode == "exact":
+        args_text = ""
+    else:
+        index = message.find(trigger)
+        if index >= 0:
+            args_text = message[index + len(trigger):].strip()
+    return {
+        "args_text": args_text,
+        "args": args_text.split() if args_text else [],
+    }
 
 
 def format_aggregate_reply(
@@ -792,18 +1145,7 @@ def format_aggregate_reply(
 
 
 def extract_path(source: Any, path: str) -> Any:
-    current = source
-    for part in [item for item in path.replace("[", ".").replace("]", "").split(".") if item]:
-        if isinstance(current, dict):
-            current = current.get(part)
-        elif isinstance(current, list):
-            try:
-                current = current[int(part)]
-            except (ValueError, IndexError):
-                return None
-        else:
-            return None
-    return current
+    return resolve_data_path(source, path)
 
 
 def selected_body(result: dict[str, Any]) -> Any:
@@ -825,6 +1167,52 @@ def response_value(result: dict[str, Any], path: str) -> Any:
     if str(selected.get("body_kind") or "") != "json":
         return None
     return extract_path(source, path)
+
+
+def transform_response_value(value: Any, transform: str) -> Any:
+    transform = normalize_response_transform(transform)
+    if transform == "raw":
+        return value
+    if transform == "string":
+        return "" if value is None else str(value)
+    if transform == "json":
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+    if transform == "join-comma":
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value)
+        return "" if value is None else str(value)
+    if transform == "join-lines":
+        if isinstance(value, list):
+            return "\n".join(str(item) for item in value)
+        return "" if value is None else str(value)
+    if transform == "int":
+        return int(value)
+    if transform == "float":
+        return float(value)
+    if transform == "bool":
+        if isinstance(value, bool):
+            return value
+        lowered = str(value or "").strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off", ""}:
+            return False
+        raise ValueError(f"cannot convert to bool: {value}")
+    return value
+
+
+def resolve_trigger_response_value(rule: dict[str, Any], result: dict[str, Any]) -> Any:
+    value = response_value(result, str(rule.get("response_path") or ""))
+    if value is None and str(rule.get("response_default") or ""):
+        value = str(rule.get("response_default") or "")
+    return transform_response_value(value, str(rule.get("response_transform") or "raw"))
+
+
+def resolve_trigger_media_url(rule: dict[str, Any], result: dict[str, Any]) -> str:
+    value = resolve_trigger_response_value(rule, result)
+    return "" if value is None else str(value).strip()
 
 
 def preview_response_path(
@@ -1002,6 +1390,22 @@ class ApiAggregatorCallTool(FunctionTool[AstrAgentContext]):
                     "description": "Optional dot path to extract from the selected JSON response, for example data.link.",
                     "default": "",
                 },
+                "response_default": {
+                    "type": "string",
+                    "description": "Optional fallback value used when response_path is empty or does not match.",
+                    "default": "",
+                },
+                "response_transform": {
+                    "type": "string",
+                    "description": "Optional response transform.",
+                    "enum": ["raw", "string", "json", "join-comma", "join-lines", "int", "float", "bool"],
+                    "default": "raw",
+                },
+                "template_vars": {
+                    "type": "object",
+                    "description": "Optional template variables exposed as vars.* for URL, query, headers, and body rendering.",
+                    "default": {},
+                },
             },
             "required": [],
         }
@@ -1022,9 +1426,15 @@ class ApiAggregatorCallTool(FunctionTool[AstrAgentContext]):
         group_name = str(kwargs.get("group") or "all").strip() or "all"
         strategy = str(kwargs.get("strategy") or "first-ok").strip()
         response_path = str(kwargs.get("response_path") or "").strip()
+        response_default = str(kwargs.get("response_default") or "")
+        response_transform = normalize_response_transform(kwargs.get("response_transform"))
+        template_context = {
+            "vars": pick_template_vars(kwargs.get("template_vars")),
+        }
         result, state_or_error, status = await self.plugin.run_aggregate_by_group_name(
             group_name,
             strategy,
+            template_context=template_context,
         )
         if status != 200 or not isinstance(result, dict):
             return json.dumps(
@@ -1040,12 +1450,17 @@ class ApiAggregatorCallTool(FunctionTool[AstrAgentContext]):
         value = None
         if result.get("ok"):
             value = response_value(result, response_path)
+            if value is None and response_default:
+                value = response_default
+            value = transform_response_value(value, response_transform)
         return json.dumps(
             {
                 "ok": bool(result.get("ok")),
                 "group": group_name,
                 "strategy": strategy,
                 "response_path": response_path,
+                "response_default": response_default,
+                "response_transform": response_transform,
                 "value": value,
                 "selected": result.get("selected"),
                 "failure_reason": result.get("failure_reason") or "",
@@ -1092,7 +1507,14 @@ class ApiAggregatorPlugin(Star):
             1,
             MAX_PREVIEW_MAX_CHARS,
         )
-        self.proxy_url = normalize_proxy_url(self.config.get("proxy_url"))
+        self.proxy_mode, self.proxy_url, self.proxy_config_status, self.proxy_error = resolve_proxy_config(
+            self.config.get("proxy_mode"),
+            self.config.get("proxy_url"),
+        )
+        if self.proxy_config_status == "invalid":
+            logger.warning(
+                "[api_aggregator] invalid proxy_url configuration ignored in custom mode; expected http:// or https://"
+            )
         self.root = Path(__file__).resolve().parent
         self.store = ApiAggregatorStore(Path(get_astrbot_plugin_data_path()) / PLUGIN_NAME)
         self._registered = False
@@ -1141,7 +1563,10 @@ class ApiAggregatorPlugin(Star):
                     "response_read_limit_bytes": self.response_read_limit_bytes,
                     "test_log_limit": self.test_log_limit,
                     "preview_max_chars": self.preview_max_chars,
-                    "proxy_enabled": bool(self.proxy_url),
+                    "proxy_mode": self.proxy_mode,
+                    "proxy_enabled": self.proxy_mode != "direct",
+                    "proxy_config_status": self.proxy_config_status,
+                    "proxy_error": self.proxy_error,
                 },
                 **data,
             }
@@ -1316,6 +1741,9 @@ class ApiAggregatorPlugin(Star):
     async def api_test(self):
         body = await read_json_body()
         api_id = str(body.get("id") or "").strip()
+        template_context = {
+            "vars": pick_template_vars(body.get("template_vars")),
+        }
         data = await self.store.read()
         api = next((item for item in data["apis"] if item["id"] == api_id), None)
         if not api:
@@ -1324,7 +1752,9 @@ class ApiAggregatorPlugin(Star):
             api,
             ignore_cooldown=True,
             response_read_limit_bytes=self.response_read_limit_bytes,
+            proxy_mode=self.proxy_mode,
             proxy_url=self.proxy_url,
+            template_context=template_context,
         )
 
         def mutate(next_data):
@@ -1335,6 +1765,10 @@ class ApiAggregatorPlugin(Star):
         return ok({"result": saved_result, "state": state})
 
     async def api_test_all(self):
+        body = await read_json_body()
+        template_context = {
+            "vars": pick_template_vars(body.get("template_vars")),
+        }
         data = await self.store.read()
         apis = [api for api in data["apis"] if api.get("enabled")]
         results = [
@@ -1342,7 +1776,9 @@ class ApiAggregatorPlugin(Star):
                 api,
                 ignore_cooldown=True,
                 response_read_limit_bytes=self.response_read_limit_bytes,
+                proxy_mode=self.proxy_mode,
                 proxy_url=self.proxy_url,
+                template_context=template_context,
             )
             for api in apis
         ]
@@ -1358,22 +1794,38 @@ class ApiAggregatorPlugin(Star):
 
     async def aggregate_call(self):
         body = await read_json_body()
+        template_context = {
+            "vars": pick_template_vars(body.get("template_vars")),
+        }
         aggregate_result, state_or_error, status = await self.run_aggregate(
             str(body.get("group_id") or "all").strip() or "all",
             str(body.get("strategy") or "").strip() or None,
+            template_context=template_context,
         )
         if status != 200:
             return fail(str(state_or_error), status)
         return ok({"result": aggregate_result, "state": state_or_error})
 
-    async def run_aggregate_by_group_name(self, group_name: str, strategy: str | None = None):
+    async def run_aggregate_by_group_name(
+        self,
+        group_name: str,
+        strategy: str | None = None,
+        *,
+        template_context: dict[str, Any] | None = None,
+    ):
         data = await self.store.read()
         group_id, error = resolve_group_name(data, group_name)
         if error:
             return None, error, 404
-        return await self.run_aggregate(str(group_id or "all"), strategy)
+        return await self.run_aggregate(str(group_id or "all"), strategy, template_context=template_context)
 
-    async def run_aggregate(self, group_id: str, strategy: str | None = None):
+    async def run_aggregate(
+        self,
+        group_id: str,
+        strategy: str | None = None,
+        *,
+        template_context: dict[str, Any] | None = None,
+    ):
         data = await self.store.read()
         strategy = strategy or str(data.get("settings", {}).get("strategy") or "first-ok")
         if strategy not in AGGREGATION_STRATEGIES:
@@ -1392,7 +1844,9 @@ class ApiAggregatorPlugin(Star):
             result = await execute_api_request(
                 api,
                 response_read_limit_bytes=self.response_read_limit_bytes,
+                proxy_mode=self.proxy_mode,
                 proxy_url=self.proxy_url,
+                template_context=template_context,
             )
             results.append(result)
             if result.get("ok"):
@@ -1468,6 +1922,10 @@ class ApiAggregatorPlugin(Star):
             "stop_event": bool(body.get("stop_event", base.get("stop_event", True))),
             "response_type": response_type,
             "response_path": str(body.get("response_path", base.get("response_path", "")) or "").strip(),
+            "response_default": str(body.get("response_default", base.get("response_default", "")) or ""),
+            "response_transform": normalize_response_transform(
+                body.get("response_transform", base.get("response_transform", "raw"))
+            ),
             "created_at": int(base.get("created_at") or ts),
             "updated_at": ts,
         }
@@ -1553,15 +2011,24 @@ class ApiAggregatorPlugin(Star):
         body = await read_json_body()
         api_id = str(body.get("api_id") or "").strip()
         path = str(body.get("response_path") or "").strip()
+        sample_message = str(body.get("sample_message") or "")
         data = await self.store.read()
         api = next((item for item in data["apis"] if item["id"] == api_id), None)
         if not api:
             return fail("api not found", 404)
+        template_context = build_message_template_context(
+            sample_message,
+            None,
+            None,
+            pick_template_vars(body.get("template_vars")),
+        )
         result = await execute_api_request(
             api,
             ignore_cooldown=True,
             response_read_limit_bytes=self.response_read_limit_bytes,
+            proxy_mode=self.proxy_mode,
             proxy_url=self.proxy_url,
+            template_context=template_context,
         )
 
         def mutate(next_data):
@@ -1592,9 +2059,17 @@ class ApiAggregatorPlugin(Star):
             logger.info(
                 f"[api_aggregator] trigger matched: id={rule.get('id')}, trigger={rule.get('trigger')!r}, group={rule.get('group_id')}, strategy={rule.get('strategy')}"
             )
+            captured = capture_trigger_arguments(rule, message)
+            template_context = build_message_template_context(
+                message,
+                event,
+                rule,
+                trigger_args=captured,
+            )
             result, state_or_error, status = await self.run_aggregate(
                 str(rule.get("group_id") or "all"),
                 str(rule.get("strategy") or data.get("settings", {}).get("strategy") or "first-ok"),
+                template_context=template_context,
             )
             if status == 200 and isinstance(result, dict):
                 logger.info(
@@ -1615,7 +2090,7 @@ class ApiAggregatorPlugin(Star):
                 response_type = str(rule.get("response_type") or "summary")
                 if response_type == "image":
                     response_path = str(rule.get("response_path") or "")
-                    image_url = str(response_value(result, response_path) or "").strip()
+                    image_url = resolve_trigger_media_url(rule, result)
                     if image_url.startswith(("http://", "https://")):
                         yield event.image_result(image_url)
                     else:
@@ -1632,7 +2107,7 @@ class ApiAggregatorPlugin(Star):
                         )
                 elif response_type == "audio":
                     response_path = str(rule.get("response_path") or "")
-                    audio_url = str(response_value(result, response_path) or "").strip()
+                    audio_url = resolve_trigger_media_url(rule, result)
                     if audio_url.startswith(("http://", "https://")):
                         yield event.chain_result([Comp.Record(file=audio_url, url=audio_url)])
                     else:
@@ -1649,7 +2124,7 @@ class ApiAggregatorPlugin(Star):
                         )
                 elif response_type == "video":
                     response_path = str(rule.get("response_path") or "")
-                    video_url = str(response_value(result, response_path) or "").strip()
+                    video_url = resolve_trigger_media_url(rule, result)
                     if video_url.startswith(("http://", "https://")):
                         yield event.chain_result([Comp.Video.fromURL(url=video_url)])
                     else:
@@ -1665,7 +2140,14 @@ class ApiAggregatorPlugin(Star):
                             )
                         )
                 elif response_type == "text":
-                    value = response_value(result, str(rule.get("response_path") or ""))
+                    try:
+                        value = resolve_trigger_response_value(rule, result)
+                    except Exception as exc:
+                        value = text_for(
+                            self.language_mode,
+                            f"API Aggregator：响应转换失败：{exc}",
+                            f"API Aggregator: response transform failed: {exc}",
+                        )
                     if isinstance(value, (dict, list)):
                         yield event.plain_result(json.dumps(value, ensure_ascii=False))
                     else:

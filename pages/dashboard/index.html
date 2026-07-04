@@ -24,10 +24,6 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3"></path><circle cx="11" cy="11" r="7"></circle></svg>
             <input id="searchInput" type="search" placeholder="Search name or URL">
           </label>
-          <div class="language-switch" role="group" aria-label="Language">
-            <button type="button" data-language-mode="zh-CN">中文</button>
-            <button type="button" data-language-mode="en-US">EN</button>
-          </div>
           <button id="refreshBtn" class="icon-btn" type="button" title="Refresh" aria-label="Refresh">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-9 9 9.7 9.7 0 0 1-6.7-2.7"></path><path d="M3 12a9 9 0 0 1 9-9 9.7 9.7 0 0 1 6.7 2.7"></path><path d="M3 18v-5h5"></path><path d="M21 6v5h-5"></path></svg>
           </button>
@@ -108,8 +104,16 @@
                 <option value="first-ok">First OK</option>
                 <option value="round-robin">Round Robin</option>
                 <option value="random">Random</option>
+                <option value="priority">Priority</option>
               </select>
             </label>
+          </div>
+          <div class="proxy-status-card">
+            <div class="proxy-status-head">
+              <span data-i18n-key="proxyStatus">Proxy Status</span>
+              <strong id="proxyStatusText">Direct</strong>
+            </div>
+            <p id="proxyStatusError" class="proxy-status-error"></p>
           </div>
           <div class="response-card">
             <div class="response-head">
@@ -194,9 +198,17 @@
       <label>Group<select id="apiGroup"></select></label>
       <label>URL<input id="apiUrl" required placeholder="https://example.com/api"></label>
       <label>Method<select id="apiMethod"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></label>
+      <label>Auth Type<select id="apiAuthType"><option value="none">None</option><option value="bearer">Bearer Token</option><option value="basic">Basic Auth</option><option value="api-key">API Key</option></select></label>
+      <label>Bearer Token<input id="apiAuthToken" spellcheck="false"></label>
+      <label>Basic Username<input id="apiAuthUsername" spellcheck="false"></label>
+      <label>Basic Password<input id="apiAuthPassword" spellcheck="false"></label>
+      <label>API Key Name<input id="apiAuthKeyName" spellcheck="false"></label>
+      <label>API Key Value<input id="apiAuthKeyValue" spellcheck="false"></label>
+      <label>API Key In<select id="apiAuthKeyIn"><option value="header">Header</option><option value="query">Query</option></select></label>
       <label>Query JSON<textarea id="apiQuery" spellcheck="false">{}</textarea></label>
       <label>Headers JSON<textarea id="apiHeaders" spellcheck="false">{}</textarea></label>
       <label>Body<textarea id="apiBody" spellcheck="false"></textarea></label>
+      <label>Priority<input id="apiPriority" type="number" min="1" max="1000" value="100"></label>
       <label>Timeout Seconds<input id="apiTimeoutSeconds" type="number" min="1" max="120" value="12"></label>
       <label>Retry Count<input id="apiRetryCount" type="number" min="0" max="5" value="0"></label>
       <label>Cooldown Seconds<input id="apiCooldownSeconds" type="number" min="0" max="3600" value="0"></label>
@@ -229,10 +241,12 @@
       <label>Trigger<input id="triggerPhrase" required placeholder="example: /api"></label>
       <label>Match Mode<select id="triggerMode"><option value="contains">Contains</option><option value="exact">Exact</option><option value="command">Command</option></select></label>
       <label>Group<select id="triggerGroup"></select></label>
-      <label>Strategy<select id="triggerStrategy"><option value="first-ok">First OK</option><option value="round-robin">Round Robin</option><option value="random">Random</option></select></label>
+      <label>Strategy<select id="triggerStrategy"><option value="first-ok">First OK</option><option value="round-robin">Round Robin</option><option value="random">Random</option><option value="priority">Priority</option></select></label>
       <label>Preview API<select id="triggerPreviewApi"></select></label>
       <label>Response Type<select id="triggerResponseType"><option value="summary">Summary</option><option value="text">Text</option><option value="image">Image</option><option value="audio">Audio</option><option value="video">Video</option></select></label>
       <label>Response Path<input id="triggerResponsePath" placeholder="example: data.link"></label>
+      <label>Response Default<input id="triggerResponseDefault" spellcheck="false"></label>
+      <label>Response Transform<select id="triggerResponseTransform"><option value="raw">Raw</option><option value="string">String</option><option value="json">JSON</option><option value="join-comma">Join with comma</option><option value="join-lines">Join with lines</option><option value="int">Integer</option><option value="float">Float</option><option value="bool">Boolean</option></select></label>
       <div class="dialog-actions">
         <button type="button" id="previewResponsePathBtn">Preview Path</button>
       </div>

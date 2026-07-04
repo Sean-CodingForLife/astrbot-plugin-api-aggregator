@@ -3,234 +3,28 @@ const state = {
   apis: [],
   test_logs: [],
   settings: { strategy: "first-ok", cursors: {} },
-  runtime_config: { default_timeout_seconds: 12, language_mode: "auto" },
+  runtime_config: {
+    default_timeout_seconds: 12,
+    language_mode: "auto",
+    proxy_mode: "direct",
+    proxy_enabled: false,
+    proxy_config_status: "direct",
+    proxy_error: "",
+  },
   selectedGroupId: "all",
   search: "",
 };
 const busyState = new Map();
-let languageOverride = null;
 
 const $ = (id) => document.getElementById(id);
 
-const I18N = {
-  "en-US": {
-    title: "API operations console",
-    appSubtitle: "Manage API entries, groups, enable state, tests, import, and export.",
-    apiInventoryDescription: "Grouped request entries with health, retry, and cooldown state.",
-    aggregatorDescription: "Run a group with the selected fallback strategy.",
-    aggregatePreview: "Aggregate preview",
-    triggerDescription: "Match chat input and route it into aggregate groups.",
-    logsDescription: "Last retained records from manual tests and aggregate calls.",
-    importExport: "Import and export",
-    importDescription: "Move API groups, entries, triggers, and runtime settings as JSON.",
-    importReplaceTitle: "Replace",
-    importReplaceDescription: "Overwrite current API groups, entries, triggers, and settings with the imported JSON.",
-    importMergeTitle: "Merge",
-    importMergeDescription: "Merge imported groups, APIs, and triggers into the current data by id.",
-    importValidateTitle: "Validate",
-    importValidateDescription: "Check the JSON payload without changing current data.",
-    importOutputEmpty: "No import or export action yet.",
-    refresh: "Refresh",
-    export: "Export",
-    import: "Import",
-    importReplace: "Import: Replace",
-    importMerge: "Import: Merge",
-    importValidate: "Import: Validate",
-    totalApis: "Total APIs",
-    enabled: "Enabled",
-    disabled: "Disabled",
-    lastOk: "Last OK",
-    aggregator: "Aggregator",
-    firstOk: "First OK",
-    roundRobin: "Round Robin",
-    random: "Random",
-    saveStrategy: "Save Strategy",
-    callGroup: "Call Group",
-    noAggregate: "No aggregate call yet.",
-    messageTriggers: "Message Triggers",
-    addTrigger: "Add Trigger",
-    groups: "Groups",
-    add: "Add",
-    apis: "APIs",
-    searchPlaceholder: "Search name or URL",
-    testEnabled: "Test Enabled APIs",
-    addApi: "Add API",
-    testLogs: "Test Logs",
-    clearView: "Clear View",
-    waiting: "Waiting for action...",
-    name: "Name",
-    group: "Group",
-    method: "Method",
-    queryJson: "Query JSON",
-    headersJson: "Headers JSON",
-    body: "Body",
-    timeoutSeconds: "Timeout Seconds",
-    retryCount: "Retry Count",
-    cooldownSeconds: "Cooldown Seconds",
-    description: "Description",
-    fieldDescription: "Description",
-    cancel: "Cancel",
-    save: "Save",
-    trigger: "Trigger",
-    matchMode: "Match Mode",
-    strategy: "Strategy",
-    previewApi: "Preview API",
-    responseType: "Response Type",
-    responsePath: "Response Path",
-    previewPath: "Preview Path",
-    noPreview: "No preview yet.",
-    stopEvent: "Stop Event",
-    contains: "Contains",
-    exact: "Exact",
-    command: "Command",
-    summary: "Summary",
-    text: "Text",
-    image: "Image",
-    audio: "Audio",
-    video: "Video",
-    all: "All",
-    unknown: "Unknown",
-    status: "Status",
-    timeout: "Timeout",
-    retry: "Retry",
-    cooldown: "Cooldown",
-    notTested: "Not tested",
-    noApis: "No APIs yet. Click Add API to start.",
-    noTriggers: "No message triggers yet.",
-    turnOff: "Turn off",
-    turnOn: "Turn on",
-    edit: "Edit",
-    delete: "Delete",
-    test: "Test",
-    selectedApi: "Selected API",
-    elapsed: "Elapsed",
-    attempts: "Attempts",
-    aggregateFailed: "Aggregate call failed.",
-    reason: "Reason",
-    noCandidate: "No candidate succeeded.",
-    previewFinished: "Preview finished.",
-    path: "Path",
-    matched: "Matched",
-    valueType: "Value type",
-    value: "Value",
-  },
-  "zh-CN": {
-    title: "API 运行控制台",
-    appSubtitle: "管理 API 条目、分组、启用状态、测试、导入和导出。",
-    apiInventoryDescription: "按分组查看请求条目、健康状态、重试和冷却时间。",
-    aggregatorDescription: "使用所选回退策略调用一个分组。",
-    aggregatePreview: "聚合预览",
-    triggerDescription: "匹配聊天输入，并路由到聚合分组。",
-    logsDescription: "保留手动测试和聚合调用的最近记录。",
-    importExport: "导入和导出",
-    importDescription: "以 JSON 迁移 API 分组、条目、触发器和运行设置。",
-    importReplaceTitle: "替换",
-    importReplaceDescription: "用导入的 JSON 覆盖当前 API 分组、条目、触发器和设置。",
-    importMergeTitle: "合并",
-    importMergeDescription: "按 id 将导入的分组、API 和触发器合并到当前数据。",
-    importValidateTitle: "校验",
-    importValidateDescription: "只检查 JSON 内容，不修改当前数据。",
-    importOutputEmpty: "尚未执行导入或导出操作。",
-    refresh: "刷新",
-    export: "导出",
-    import: "导入",
-    importReplace: "导入：替换",
-    importMerge: "导入：合并",
-    importValidate: "导入：校验",
-    totalApis: "API 总数",
-    enabled: "已启用",
-    disabled: "已禁用",
-    lastOk: "最近成功",
-    aggregator: "聚合器",
-    firstOk: "首个成功",
-    roundRobin: "轮询",
-    random: "随机",
-    saveStrategy: "保存策略",
-    callGroup: "调用分组",
-    noAggregate: "尚未执行聚合调用。",
-    messageTriggers: "消息触发器",
-    addTrigger: "添加触发器",
-    groups: "分组",
-    add: "添加",
-    apis: "API",
-    searchPlaceholder: "搜索名称或 URL",
-    testEnabled: "测试已启用 API",
-    addApi: "添加 API",
-    testLogs: "测试日志",
-    clearView: "清空视图",
-    waiting: "等待操作...",
-    name: "名称",
-    group: "分组",
-    method: "方法",
-    queryJson: "Query JSON",
-    headersJson: "Headers JSON",
-    body: "Body",
-    timeoutSeconds: "超时秒数",
-    retryCount: "重试次数",
-    cooldownSeconds: "冷却秒数",
-    description: "描述",
-    fieldDescription: "描述",
-    cancel: "取消",
-    save: "保存",
-    trigger: "触发词",
-    matchMode: "匹配模式",
-    strategy: "策略",
-    previewApi: "预览 API",
-    responseType: "响应类型",
-    responsePath: "响应路径",
-    previewPath: "预览路径",
-    noPreview: "尚未预览。",
-    stopEvent: "停止事件",
-    contains: "包含",
-    exact: "精确",
-    command: "命令",
-    summary: "摘要",
-    text: "文本",
-    image: "图片",
-    audio: "音频",
-    video: "视频",
-    all: "全部",
-    unknown: "未知",
-    status: "状态",
-    timeout: "超时",
-    retry: "重试",
-    cooldown: "冷却",
-    notTested: "未测试",
-    noApis: "暂无 API。点击添加 API 开始。",
-    noTriggers: "暂无消息触发器。",
-    turnOff: "关闭",
-    turnOn: "开启",
-    edit: "编辑",
-    delete: "删除",
-    test: "测试",
-    selectedApi: "选中 API",
-    elapsed: "耗时",
-    attempts: "尝试次数",
-    aggregateFailed: "聚合调用失败。",
-    reason: "原因",
-    noCandidate: "没有候选 API 成功。",
-    previewFinished: "预览完成。",
-    path: "路径",
-    matched: "匹配",
-    valueType: "值类型",
-    value: "值",
-  },
-};
-
-function currentLanguage() {
-  if (languageOverride === "zh-CN" || languageOverride === "en-US") return languageOverride;
-  const mode = state.runtime_config?.language_mode || "auto";
-  if (mode === "zh-CN" || mode === "en-US") return mode;
+function pageLocale() {
   const api = window.AstrBotPluginPage;
-  const locale = api?.getLocale?.() || api?.getContext?.()?.locale || navigator.language || "en-US";
-  return locale.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+  return api?.getLocale?.() || api?.getContext?.()?.locale || navigator.language || "en-US";
 }
 
-function t(key) {
-  const language = currentLanguage();
-  const fallback = I18N[language]?.[key] || I18N["en-US"][key] || key;
+function t(key, fallback = key) {
   const api = window.AstrBotPluginPage;
-  if (languageOverride) return fallback;
   return typeof api?.t === "function" ? api.t(`pages.dashboard.${key}`, fallback) : fallback;
 }
 
@@ -253,13 +47,14 @@ function setOptionText(selectId, value, key) {
 }
 
 function applyTranslations() {
-  document.documentElement.lang = currentLanguage();
+  document.documentElement.lang = pageLocale();
+  document.title = t("title", "API operations console");
   document.querySelectorAll("[data-i18n-key]").forEach((element) => {
     element.textContent = t(element.dataset.i18nKey);
   });
-  document.querySelectorAll("[data-language-mode]").forEach((button) => {
-    button.classList.toggle("is-selected", button.dataset.languageMode === currentLanguage());
-  });
+  $("refreshBtn").title = t("refresh", "Refresh");
+  $("refreshBtn").setAttribute("aria-label", t("refresh", "Refresh"));
+  $("searchInput").setAttribute("aria-label", t("searchPlaceholder", "Search name or URL"));
   setText("#refreshBtn", "refresh");
   setText("#exportBtn", "export");
   setOptionText("importStrategy", "replace", "importReplace");
@@ -273,6 +68,7 @@ function applyTranslations() {
   setOptionText("strategySelect", "first-ok", "firstOk");
   setOptionText("strategySelect", "round-robin", "roundRobin");
   setOptionText("strategySelect", "random", "random");
+  setOptionText("strategySelect", "priority", "priority");
   setText("#saveSettingsBtn", "saveStrategy");
   setText("#callAggregateBtn", "callGroup");
   setText("#addTriggerBtn", "addTrigger");
@@ -293,9 +89,23 @@ function applyTranslations() {
   setLabelText("apiName", "name");
   setLabelText("apiGroup", "group");
   setLabelText("apiMethod", "method");
+  setLabelText("apiAuthType", "authType");
+  setLabelText("apiAuthToken", "bearerToken");
+  setLabelText("apiAuthUsername", "basicUsername");
+  setLabelText("apiAuthPassword", "basicPassword");
+  setLabelText("apiAuthKeyName", "apiKeyName");
+  setLabelText("apiAuthKeyValue", "apiKeyValue");
+  setLabelText("apiAuthKeyIn", "apiKeyIn");
   setLabelText("apiQuery", "queryJson");
   setLabelText("apiHeaders", "headersJson");
   setLabelText("apiBody", "body");
+  setLabelText("apiPriority", "priority");
+  setOptionText("apiAuthType", "none", "none");
+  setOptionText("apiAuthType", "bearer", "bearerToken");
+  setOptionText("apiAuthType", "basic", "basicAuth");
+  setOptionText("apiAuthType", "api-key", "apiKey");
+  setOptionText("apiAuthKeyIn", "header", "header");
+  setOptionText("apiAuthKeyIn", "query", "query");
   setLabelText("apiTimeoutSeconds", "timeoutSeconds");
   setLabelText("apiRetryCount", "retryCount");
   setLabelText("apiCooldownSeconds", "cooldownSeconds");
@@ -308,25 +118,36 @@ function applyTranslations() {
   setText("#cancelGroupBtn", "cancel");
   setText("#groupForm button[type='submit']", "save");
   setLabelText("triggerPhrase", "trigger");
-  $("triggerPhrase").placeholder = currentLanguage() === "zh-CN" ? "示例：/api" : "example: /api";
+  $("triggerPhrase").placeholder = t("triggerExample", "example: /api");
   setLabelText("triggerMode", "matchMode");
   setLabelText("triggerGroup", "group");
   setLabelText("triggerStrategy", "strategy");
   setLabelText("triggerPreviewApi", "previewApi");
   setLabelText("triggerResponseType", "responseType");
   setLabelText("triggerResponsePath", "responsePath");
-  $("triggerResponsePath").placeholder = currentLanguage() === "zh-CN" ? "示例：data.link" : "example: data.link";
+  $("triggerResponsePath").placeholder = t("responsePathExample", "example: data.link");
   setOptionText("triggerMode", "contains", "contains");
   setOptionText("triggerMode", "exact", "exact");
   setOptionText("triggerMode", "command", "command");
   setOptionText("triggerStrategy", "first-ok", "firstOk");
   setOptionText("triggerStrategy", "round-robin", "roundRobin");
   setOptionText("triggerStrategy", "random", "random");
+  setOptionText("triggerStrategy", "priority", "priority");
   setOptionText("triggerResponseType", "summary", "summary");
   setOptionText("triggerResponseType", "text", "text");
   setOptionText("triggerResponseType", "image", "image");
   setOptionText("triggerResponseType", "audio", "audio");
   setOptionText("triggerResponseType", "video", "video");
+  setLabelText("triggerResponseDefault", "responseDefault");
+  setLabelText("triggerResponseTransform", "responseTransform");
+  setOptionText("triggerResponseTransform", "raw", "raw");
+  setOptionText("triggerResponseTransform", "string", "string");
+  setOptionText("triggerResponseTransform", "json", "json");
+  setOptionText("triggerResponseTransform", "join-comma", "joinComma");
+  setOptionText("triggerResponseTransform", "join-lines", "joinLines");
+  setOptionText("triggerResponseTransform", "int", "integer");
+  setOptionText("triggerResponseTransform", "float", "float");
+  setOptionText("triggerResponseTransform", "bool", "boolean");
   setText("#previewResponsePathBtn", "previewPath");
   setLabelText("triggerEnabled", "enabled");
   setLabelText("triggerStopEvent", "stopEvent");
@@ -407,7 +228,16 @@ function applyState(data) {
   state.apis = Array.isArray(data.apis) ? data.apis : [];
   state.test_logs = Array.isArray(data.test_logs) ? data.test_logs : [];
   state.settings = data.settings && typeof data.settings === "object" ? data.settings : { strategy: "first-ok", cursors: {} };
-  state.runtime_config = data.runtime_config && typeof data.runtime_config === "object" ? data.runtime_config : { default_timeout_seconds: 12, language_mode: "auto" };
+  state.runtime_config = data.runtime_config && typeof data.runtime_config === "object"
+    ? data.runtime_config
+    : {
+      default_timeout_seconds: 12,
+      language_mode: "auto",
+      proxy_mode: "direct",
+      proxy_enabled: false,
+      proxy_config_status: "direct",
+      proxy_error: "",
+    };
   if (state.selectedGroupId !== "all" && !state.groups.some((group) => group.id === state.selectedGroupId)) {
     state.selectedGroupId = "all";
   }
@@ -416,10 +246,10 @@ function applyState(data) {
 }
 
 async function refresh() {
-  return withBusy("refresh", { target: "refreshBtn", busyText: "Refreshing...", startText: "Refreshing state..." }, async () => {
+  return withBusy("refresh", { target: "refreshBtn", busyText: t("refreshing", "Refreshing..."), startText: t("refreshingState", "Refreshing state...") }, async () => {
     const data = await apiGet("state");
     applyState(data);
-    log(currentLanguage() === "zh-CN" ? "状态已刷新" : "State refreshed", { apis: state.apis.length, groups: state.groups.length });
+    log(t("stateRefreshed", "State refreshed"), { apis: state.apis.length, groups: state.groups.length });
   });
 }
 
@@ -453,14 +283,14 @@ function summarizeAggregateResult(result) {
 function summarizePreview(preview, result) {
   const lines = [
     preview?.message || t("previewFinished"),
-    `${t("matched")}: ${preview?.matched ? "yes" : "no"}`,
+    `${t("matched")}: ${preview?.matched ? t("yes", "yes") : t("no", "no")}`,
     `${t("valueType")}: ${preview?.value_type || "unknown"}`,
   ];
   if (result?.attempt_count) {
-    lines.push(`Request attempts: ${result.attempt_count}`);
+    lines.push(`${t("requestAttempts", "Request attempts")}: ${result.attempt_count}`);
   }
   if (result?.error) {
-    lines.push(`Request error: ${result.error}`);
+    lines.push(`${t("requestError", "Request error")}: ${result.error}`);
   }
   lines.push("");
   lines.push(JSON.stringify(preview, null, 2));
@@ -518,6 +348,29 @@ function renderAggregateControls() {
   $("strategySelect").value = state.settings.strategy || "first-ok";
 }
 
+function proxyStatusLabel(runtimeConfig) {
+  const status = runtimeConfig?.proxy_config_status || "unknown";
+  if (status === "direct") return t("proxyDirect");
+  if (status === "custom") return t("proxyCustom");
+  if (status === "environment") return t("proxyEnvironment");
+  if (status === "invalid") return t("proxyInvalid");
+  return t("proxyUnknown");
+}
+
+function renderProxyStatus() {
+  const runtimeConfig = state.runtime_config || {};
+  $("proxyStatusText").textContent = proxyStatusLabel(runtimeConfig);
+  const proxyError = String(runtimeConfig.proxy_error || "").trim();
+  $("proxyStatusError").textContent = proxyError || (
+    runtimeConfig.proxy_config_status === "invalid" ? t("proxyInvalidHelp") : ""
+  );
+  $("proxyStatusText").className = ["custom", "environment"].includes(runtimeConfig.proxy_config_status)
+    ? "badge ok"
+    : runtimeConfig.proxy_config_status === "invalid"
+      ? "badge fail"
+      : "badge";
+}
+
 function groupOptions(selectedId = "all") {
   const options = [
     `<option value="all">${t("all")}</option>`,
@@ -549,7 +402,7 @@ function renderTriggers() {
           <span class="badge">${escapeHtml(rule.strategy)}</span>
           <span class="badge">${t(rule.response_type || "summary")}</span>
           <span class="badge">${rule.enabled ? t("enabled") : t("disabled")}</span>
-          <span class="badge">${rule.stop_event ? (currentLanguage() === "zh-CN" ? "停止事件" : "Stops event") : (currentLanguage() === "zh-CN" ? "继续传递" : "Pass-through")}</span>
+          <span class="badge">${rule.stop_event ? t("stopsEvent", "Stops event") : t("passThrough", "Pass-through")}</span>
         </div>
         <div class="api-meta">
           <span class="badge">${escapeHtml(groupName(rule.group_id))}</span>
@@ -596,11 +449,11 @@ function renderApis() {
               <span class="badge">${t("cooldown")}: ${escapeHtml(api.cooldown_seconds ?? 0)}s</span>
               ${cooldownLabel(api) ? `<span class="badge fail">${escapeHtml(cooldownLabel(api))}</span>` : ""}
             </div>
-            ${api.last_error ? `<div class="api-url">${currentLanguage() === "zh-CN" ? "最近错误" : "Last error"}: ${escapeHtml(api.last_error)}</div>` : ""}
+            ${api.last_error ? `<div class="api-url">${t("lastError", "Last error")}: ${escapeHtml(api.last_error)}</div>` : ""}
           </div>
           <div class="api-actions">
             <button data-action="test-api" data-id="${escapeHtml(api.id)}">${t("test")}</button>
-            <button data-action="toggle-api" data-id="${escapeHtml(api.id)}">${api.enabled ? t("disabled") : t("enabled")}</button>
+            <button data-action="toggle-api" data-id="${escapeHtml(api.id)}">${api.enabled ? t("turnOff") : t("turnOn")}</button>
             <button data-action="edit-api" data-id="${escapeHtml(api.id)}">${t("edit")}</button>
             <button class="danger" data-action="delete-api" data-id="${escapeHtml(api.id)}">${t("delete")}</button>
           </div>
@@ -623,6 +476,7 @@ function render() {
   renderSummary();
   renderGroups();
   renderAggregateControls();
+  renderProxyStatus();
   renderTriggers();
   renderApis();
   renderLogs();
@@ -651,9 +505,17 @@ function openApiDialog(api = null) {
   $("apiGroup").value = api?.group_id || state.groups[0]?.id || "default";
   $("apiUrl").value = api?.url || "";
   $("apiMethod").value = api?.method || "GET";
+  $("apiAuthType").value = api?.auth_type || "none";
+  $("apiAuthToken").value = api?.auth_config?.token || "";
+  $("apiAuthUsername").value = api?.auth_config?.username || "";
+  $("apiAuthPassword").value = api?.auth_config?.password || "";
+  $("apiAuthKeyName").value = api?.auth_config?.key_name || "";
+  $("apiAuthKeyValue").value = api?.auth_config?.key_value || "";
+  $("apiAuthKeyIn").value = api?.auth_config?.api_key_in || "header";
   $("apiQuery").value = JSON.stringify(api?.query || {}, null, 2);
   $("apiHeaders").value = JSON.stringify(api?.headers || {}, null, 2);
   $("apiBody").value = api?.body || "";
+  $("apiPriority").value = String(api?.priority ?? 100);
   $("apiTimeoutSeconds").value = String(api?.timeout_seconds ?? defaultTimeoutSeconds);
   $("apiRetryCount").value = String(api?.retry_count ?? 0);
   $("apiCooldownSeconds").value = String(api?.cooldown_seconds ?? 0);
@@ -684,6 +546,8 @@ function openTriggerDialog(rule = null) {
   $("triggerPreviewApi").value = apiSelect.value;
   $("triggerResponseType").value = rule?.response_type || "summary";
   $("triggerResponsePath").value = rule?.response_path || "";
+  $("triggerResponseDefault").value = rule?.response_default || "";
+  $("triggerResponseTransform").value = rule?.response_transform || "raw";
   $("triggerResponsePreview").textContent = t("noPreview");
   $("triggerEnabled").checked = rule?.enabled !== false;
   $("triggerStopEvent").checked = rule?.stop_event !== false;
@@ -700,9 +564,19 @@ async function saveApi(event) {
     group_id: $("apiGroup").value,
     url: $("apiUrl").value,
     method: $("apiMethod").value,
+    auth_type: $("apiAuthType").value,
+    auth_config: {
+      token: $("apiAuthToken").value,
+      username: $("apiAuthUsername").value,
+      password: $("apiAuthPassword").value,
+      key_name: $("apiAuthKeyName").value,
+      key_value: $("apiAuthKeyValue").value,
+      api_key_in: $("apiAuthKeyIn").value,
+    },
     query: parseJsonInput("apiQuery"),
     headers: parseJsonInput("apiHeaders"),
     body: $("apiBody").value,
+    priority: parseNumberInput("apiPriority", 100, 1, 1000),
     timeout_seconds: parseNumberInput("apiTimeoutSeconds", defaultTimeoutSeconds, 1, 120),
     retry_count: parseNumberInput("apiRetryCount", 0, 0, 5),
     cooldown_seconds: parseNumberInput("apiCooldownSeconds", 0, 0, 3600),
@@ -710,11 +584,11 @@ async function saveApi(event) {
     enabled: $("apiEnabled").checked,
   };
   const endpoint = id ? "apis/update" : "apis/create";
-  await withBusy("save-api", { target: event.submitter, busyText: "Saving...", startText: id ? "Saving API..." : "Creating API..." }, async () => {
+  await withBusy("save-api", { target: event.submitter, busyText: t("saving", "Saving..."), startText: id ? t("savingApi", "Saving API...") : t("creatingApi", "Creating API...") }, async () => {
     const result = await apiPost(endpoint, payload);
     applyState(result.state);
     $("apiDialog").close();
-    log(id ? "API updated" : "API created", result.api);
+    log(id ? t("apiUpdated", "API updated") : t("apiCreated", "API created"), result.api);
   });
 }
 
@@ -727,11 +601,11 @@ async function saveGroup(event) {
     description: $("groupDescription").value,
   };
   const endpoint = id ? "groups/update" : "groups/create";
-  await withBusy("save-group", { target: event.submitter, busyText: "Saving...", startText: id ? "Saving group..." : "Creating group..." }, async () => {
+  await withBusy("save-group", { target: event.submitter, busyText: t("saving", "Saving..."), startText: id ? t("savingGroup", "Saving group...") : t("creatingGroup", "Creating group...") }, async () => {
     const result = await apiPost(endpoint, payload);
     applyState(result.state);
     $("groupDialog").close();
-    log(id ? "Group updated" : "Group created", result.group);
+    log(id ? t("groupUpdated", "Group updated") : t("groupCreated", "Group created"), result.group);
   });
 }
 
@@ -747,32 +621,34 @@ async function saveTrigger(event) {
     preview_api_id: $("triggerPreviewApi").value,
     response_type: $("triggerResponseType").value,
     response_path: $("triggerResponsePath").value,
+    response_default: $("triggerResponseDefault").value,
+    response_transform: $("triggerResponseTransform").value,
     enabled: $("triggerEnabled").checked,
     stop_event: $("triggerStopEvent").checked,
   };
   const endpoint = id ? "triggers/update" : "triggers/create";
-  await withBusy("save-trigger", { target: event.submitter, busyText: "Saving...", startText: id ? "Saving trigger..." : "Creating trigger..." }, async () => {
+  await withBusy("save-trigger", { target: event.submitter, busyText: t("saving", "Saving..."), startText: id ? t("savingTrigger", "Saving trigger...") : t("creatingTrigger", "Creating trigger...") }, async () => {
     const result = await apiPost(endpoint, payload);
     applyState(result.state);
     $("triggerDialog").close();
-    log(id ? "Trigger updated" : "Trigger created", result.trigger);
+    log(id ? t("triggerUpdated", "Trigger updated") : t("triggerCreated", "Trigger created"), result.trigger);
   });
 }
 
 async function previewTriggerResponsePath() {
   const apiId = $("triggerPreviewApi").value;
   if (!apiId) {
-    throw new Error("Choose an API to preview");
+    throw new Error(t("choosePreviewApi", "Choose an API to preview"));
   }
-  $("triggerResponsePreview").textContent = "Preview running...";
-  await withBusy("preview-response-path", { target: "previewResponsePathBtn", busyText: "Previewing...", startText: "Running response path preview..." }, async () => {
+  $("triggerResponsePreview").textContent = t("previewRunning", "Preview running...");
+  await withBusy("preview-response-path", { target: "previewResponsePathBtn", busyText: t("previewing", "Previewing..."), startText: t("runningResponsePathPreview", "Running response path preview...") }, async () => {
     const result = await apiPost("triggers/preview-response-path", {
       api_id: apiId,
       response_path: $("triggerResponsePath").value.trim(),
     });
     applyState(result.state);
     $("triggerResponsePreview").textContent = summarizePreview(result.preview, result.result);
-    log("Response path preview completed", result.preview);
+    log(t("responsePathPreviewCompleted", "Response path preview completed"), result.preview);
   });
 }
 
@@ -789,58 +665,58 @@ async function handleAction(event) {
     } else if (action === "edit-group") {
       openGroupDialog(state.groups.find((group) => group.id === id));
     } else if (action === "delete-group") {
-      if (!confirm("Delete this group? Its APIs will move to the default group.")) return;
-      await withBusy(`delete-group-${id}`, { target, busyText: "Deleting...", startText: "Deleting group..." }, async () => {
+      if (!confirm(t("confirmDeleteGroup", "Delete this group? Its APIs will move to the default group."))) return;
+      await withBusy(`delete-group-${id}`, { target, busyText: t("deleting", "Deleting..."), startText: t("deletingGroup", "Deleting group...") }, async () => {
         const result = await apiPost("groups/delete", { id });
         applyState(result.state);
-        log("Group deleted", result.result);
+        log(t("groupDeleted", "Group deleted"), result.result);
       });
     } else if (action === "edit-api") {
       openApiDialog(state.apis.find((api) => api.id === id));
     } else if (action === "delete-api") {
-      if (!confirm("Delete this API?")) return;
-      await withBusy(`delete-api-${id}`, { target, busyText: "Deleting...", startText: "Deleting API..." }, async () => {
+      if (!confirm(t("confirmDeleteApi", "Delete this API?"))) return;
+      await withBusy(`delete-api-${id}`, { target, busyText: t("deleting", "Deleting..."), startText: t("deletingApi", "Deleting API...") }, async () => {
         const result = await apiPost("apis/delete", { id });
         applyState(result.state);
-        log("API deleted", result.result);
+        log(t("apiDeleted", "API deleted"), result.result);
       });
     } else if (action === "toggle-api") {
       const api = state.apis.find((item) => item.id === id);
-      await withBusy(`toggle-api-${id}`, { target, busyText: "Updating...", startText: "Updating API state..." }, async () => {
+      await withBusy(`toggle-api-${id}`, { target, busyText: t("updating", "Updating..."), startText: t("updatingApiState", "Updating API state...") }, async () => {
         const result = await apiPost("apis/toggle", { id, enabled: !api?.enabled });
         applyState(result.state);
-        log("API state updated", result.api);
+        log(t("apiStateUpdated", "API state updated"), result.api);
       });
     } else if (action === "test-api") {
-      await withBusy(`test-api-${id}`, { target, busyText: "Testing...", startText: "Testing API..." }, async () => {
+      await withBusy(`test-api-${id}`, { target, busyText: t("testing", "Testing..."), startText: t("testingApi", "Testing API...") }, async () => {
         const result = await apiPost("apis/test", { id });
         applyState(result.state);
-        log("API test completed", result.result);
+        log(t("apiTestCompleted", "API test completed"), result.result);
       });
     } else if (action === "edit-trigger") {
       const triggers = Array.isArray(state.settings.triggers) ? state.settings.triggers : [];
       openTriggerDialog(triggers.find((rule) => rule.id === id));
     } else if (action === "delete-trigger") {
-      if (!confirm("Delete this trigger?")) return;
-      await withBusy(`delete-trigger-${id}`, { target, busyText: "Deleting...", startText: "Deleting trigger..." }, async () => {
+      if (!confirm(t("confirmDeleteTrigger", "Delete this trigger?"))) return;
+      await withBusy(`delete-trigger-${id}`, { target, busyText: t("deleting", "Deleting..."), startText: t("deletingTrigger", "Deleting trigger...") }, async () => {
         const result = await apiPost("triggers/delete", { id });
         applyState(result.state);
-        log("Trigger deleted", result.result);
+        log(t("triggerDeleted", "Trigger deleted"), result.result);
       });
     } else if (action === "toggle-trigger") {
       const triggers = Array.isArray(state.settings.triggers) ? state.settings.triggers : [];
       const rule = triggers.find((item) => item.id === id);
-      await withBusy(`toggle-trigger-${id}`, { target, busyText: "Updating...", startText: rule?.enabled ? "Turning trigger off..." : "Turning trigger on..." }, async () => {
+      await withBusy(`toggle-trigger-${id}`, { target, busyText: t("updating", "Updating..."), startText: rule?.enabled ? t("turningTriggerOff", "Turning trigger off...") : t("turningTriggerOn", "Turning trigger on...") }, async () => {
         const result = await apiPost("triggers/toggle", { id, enabled: !rule?.enabled });
         applyState(result.state);
-        log(result.trigger?.enabled ? "Trigger turned on" : "Trigger turned off", {
+        log(result.trigger?.enabled ? t("triggerTurnedOn", "Trigger turned on") : t("triggerTurnedOff", "Trigger turned off"), {
           trigger: result.trigger?.trigger,
           match_mode: result.trigger?.match_mode,
         });
       });
     }
   } catch (error) {
-    log("Action failed", { message: error?.message || String(error) });
+    log(t("actionFailed", "Action failed"), { message: error?.message || String(error) });
   }
 }
 
@@ -862,19 +738,19 @@ function setView(view) {
   });
 }
 
-$("refreshBtn").addEventListener("click", () => refresh().catch((error) => log("Refresh failed", { message: error.message })));
+$("refreshBtn").addEventListener("click", () => refresh().catch((error) => log(t("refreshFailed", "Refresh failed"), { message: error.message })));
 $("addApiBtn").addEventListener("click", () => openApiDialog());
 $("addGroupBtn").addEventListener("click", () => openGroupDialog());
 $("addTriggerBtn").addEventListener("click", () => openTriggerDialog());
 $("cancelApiBtn").addEventListener("click", () => $("apiDialog").close());
 $("cancelGroupBtn").addEventListener("click", () => $("groupDialog").close());
 $("cancelTriggerBtn").addEventListener("click", () => $("triggerDialog").close());
-$("apiForm").addEventListener("submit", (event) => saveApi(event).catch((error) => log("Save API failed", { message: error.message })));
-$("groupForm").addEventListener("submit", (event) => saveGroup(event).catch((error) => log("Save group failed", { message: error.message })));
-$("triggerForm").addEventListener("submit", (event) => saveTrigger(event).catch((error) => log("Save trigger failed", { message: error.message })));
+$("apiForm").addEventListener("submit", (event) => saveApi(event).catch((error) => log(t("saveApiFailed", "Save API failed"), { message: error.message })));
+$("groupForm").addEventListener("submit", (event) => saveGroup(event).catch((error) => log(t("saveGroupFailed", "Save group failed"), { message: error.message })));
+$("triggerForm").addEventListener("submit", (event) => saveTrigger(event).catch((error) => log(t("saveTriggerFailed", "Save trigger failed"), { message: error.message })));
 $("previewResponsePathBtn").addEventListener("click", () => previewTriggerResponsePath().catch((error) => {
   $("triggerResponsePreview").textContent = JSON.stringify({ message: error.message }, null, 2);
-  log("Response path preview failed", { message: error.message });
+  log(t("responsePathPreviewFailed", "Response path preview failed"), { message: error.message });
 }));
 $("apiList").addEventListener("click", (event) => handleAction(event));
 $("groupList").addEventListener("click", (event) => handleAction(event));
@@ -885,47 +761,47 @@ $("searchInput").addEventListener("input", (event) => {
 });
 $("testAllBtn").addEventListener("click", async () => {
   try {
-    await withBusy("test-all", { target: "testAllBtn", busyText: "Testing...", startText: "Testing enabled APIs..." }, async () => {
+    await withBusy("test-all", { target: "testAllBtn", busyText: t("testing", "Testing..."), startText: t("testingEnabledApis", "Testing enabled APIs...") }, async () => {
       const result = await apiPost("apis/test-all", {});
       applyState(result.state);
-      log("Batch test completed", result.results);
+      log(t("batchTestCompleted", "Batch test completed"), result.results);
     });
   } catch (error) {
-    log("Batch test failed", { message: error.message });
+    log(t("batchTestFailed", "Batch test failed"), { message: error.message });
   }
 });
 $("saveSettingsBtn").addEventListener("click", async () => {
   try {
-    await withBusy("save-settings", { target: "saveSettingsBtn", busyText: "Saving...", startText: "Saving strategy..." }, async () => {
+    await withBusy("save-settings", { target: "saveSettingsBtn", busyText: t("saving", "Saving..."), startText: t("savingStrategy", "Saving strategy...") }, async () => {
       const result = await apiPost("settings/save", { strategy: $("strategySelect").value });
       applyState(result.state);
-      log("Settings saved", result.settings);
+      log(t("settingsSaved", "Settings saved"), result.settings);
     });
   } catch (error) {
-    log("Save settings failed", { message: error.message });
+    log(t("saveSettingsFailed", "Save settings failed"), { message: error.message });
   }
 });
 $("callAggregateBtn").addEventListener("click", async () => {
   try {
-    $("aggregateOutput").textContent = "Aggregate call running...";
-    await withBusy("aggregate-call", { target: "callAggregateBtn", busyText: "Calling...", startText: "Calling aggregate group..." }, async () => {
+    $("aggregateOutput").textContent = t("aggregateCallRunning", "Aggregate call running...");
+    await withBusy("aggregate-call", { target: "callAggregateBtn", busyText: t("calling", "Calling..."), startText: t("callingAggregateGroup", "Calling aggregate group...") }, async () => {
       const result = await apiPost("aggregate/call", {
         group_id: $("aggregateGroup").value,
         strategy: $("strategySelect").value,
       });
       applyState(result.state);
       $("aggregateOutput").textContent = `${summarizeAggregateResult(result.result)}\n\n${JSON.stringify(result.result, null, 2)}`;
-      log("Aggregate call completed", result.result);
+      log(t("aggregateCallCompleted", "Aggregate call completed"), result.result);
     });
   } catch (error) {
     $("aggregateOutput").textContent = JSON.stringify({ message: error.message }, null, 2);
-    log("Aggregate call failed", { message: error.message });
+    log(t("aggregateCallFailedLog", "Aggregate call failed"), { message: error.message });
   }
 });
-$("clearLogViewBtn").addEventListener("click", () => log("View cleared"));
+$("clearLogViewBtn").addEventListener("click", () => log(t("viewCleared", "View cleared")));
 $("exportBtn").addEventListener("click", async () => {
   try {
-    await withBusy("export", { target: "exportBtn", busyText: "Exporting...", startText: "Exporting data..." }, async () => {
+    await withBusy("export", { target: "exportBtn", busyText: t("exporting", "Exporting..."), startText: t("exportingData", "Exporting data...") }, async () => {
       const data = await apiGet("export");
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -934,11 +810,11 @@ $("exportBtn").addEventListener("click", async () => {
       link.download = `api-aggregator-${Date.now()}.json`;
       link.click();
       URL.revokeObjectURL(url);
-      log("Export completed");
+      log(t("exportCompleted", "Export completed"));
       if ($("importOutput")) $("importOutput").textContent = JSON.stringify(data, null, 2);
     });
   } catch (error) {
-    log("Export failed", { message: error.message });
+    log(t("exportFailed", "Export failed"), { message: error.message });
     if ($("importOutput")) $("importOutput").textContent = JSON.stringify({ message: error.message }, null, 2);
   }
 });
@@ -946,7 +822,7 @@ $("importInput").addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
   try {
-    await withBusy("import", { target: "importStrategy", startText: "Importing data..." }, async () => {
+    await withBusy("import", { target: "importStrategy", startText: t("importingData", "Importing data...") }, async () => {
       const data = JSON.parse(await file.text());
       const strategy = $("importStrategy").value || "replace";
       const result = await apiPost("import", { data, strategy });
@@ -954,7 +830,7 @@ $("importInput").addEventListener("change", async (event) => {
         applyState(result.state);
       }
       if (strategy === "validate") {
-        log("Import validation completed", result.summary);
+        log(t("importValidationCompleted", "Import validation completed"), result.summary);
         if ($("importOutput")) $("importOutput").textContent = JSON.stringify(result.summary, null, 2);
       } else {
         const summary = {
@@ -963,12 +839,12 @@ $("importInput").addEventListener("change", async (event) => {
           apis: result.state?.apis?.length ?? 0,
           triggers: result.state?.settings?.triggers?.length ?? 0,
         };
-        log(`Import completed (${strategy})`, summary);
+        log(`${t("importCompleted", "Import completed")} (${strategy})`, summary);
         if ($("importOutput")) $("importOutput").textContent = JSON.stringify(summary, null, 2);
       }
     });
   } catch (error) {
-    log("Import failed", { message: error.message });
+    log(t("importFailed", "Import failed"), { message: error.message });
     if ($("importOutput")) $("importOutput").textContent = JSON.stringify({ message: error.message }, null, 2);
   } finally {
     event.target.value = "";
@@ -979,14 +855,6 @@ document.querySelectorAll("[data-view-target]").forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.viewTarget));
 });
 
-document.querySelectorAll("[data-language-mode]").forEach((button) => {
-  button.addEventListener("click", () => {
-    languageOverride = button.dataset.languageMode;
-    applyTranslations();
-    render();
-  });
-});
-
 await bridge().ready();
 applyTranslations();
 if (typeof window.AstrBotPluginPage?.onContext === "function") {
@@ -995,5 +863,5 @@ if (typeof window.AstrBotPluginPage?.onContext === "function") {
     render();
   });
 }
-log(currentLanguage() === "zh-CN" ? "页面处理器已注册，正在加载状态..." : "Page handlers registered. Loading state...");
-refresh().catch((error) => log("Initialization failed", { message: error.message }));
+log(t("pageHandlersReady", "Page handlers registered. Loading state..."));
+refresh().catch((error) => log(t("initializationFailed", "Initialization failed"), { message: error.message }));

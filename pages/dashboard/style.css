@@ -596,6 +596,41 @@ select,
   padding: 10px;
 }
 
+.proxy-status-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  margin-bottom: 14px;
+  padding: 10px 12px;
+}
+
+.proxy-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.proxy-status-head span,
+.proxy-status-error {
+  color: var(--muted);
+}
+
+.proxy-status-head strong {
+  font-size: 13px;
+}
+
+.proxy-status-error {
+  min-height: 18px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.proxy-status-error:empty {
+  display: none;
+}
+
 select,
 input,
 textarea {
