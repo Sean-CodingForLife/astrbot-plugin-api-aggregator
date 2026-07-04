@@ -53,7 +53,7 @@ const I18N = {
     add: "Add",
     apis: "APIs",
     searchPlaceholder: "Search name or URL",
-    testEnabled: "Test Enabled",
+    testEnabled: "Test Enabled APIs",
     addApi: "Add API",
     testLogs: "Test Logs",
     clearView: "Clear View",
@@ -154,7 +154,7 @@ const I18N = {
     add: "添加",
     apis: "API",
     searchPlaceholder: "搜索名称或 URL",
-    testEnabled: "测试已启用",
+    testEnabled: "测试已启用 API",
     addApi: "添加 API",
     testLogs: "测试日志",
     clearView: "清空视图",
@@ -860,8 +860,6 @@ function setView(view) {
   document.querySelectorAll("[data-view-target]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.viewTarget === view);
   });
-  $("aggregatorPanel").classList.toggle("is-hidden", view !== "apis");
-  document.querySelector(".content-grid")?.classList.toggle("is-wide", view !== "apis");
 }
 
 $("refreshBtn").addEventListener("click", () => refresh().catch((error) => log("Refresh failed", { message: error.message })));

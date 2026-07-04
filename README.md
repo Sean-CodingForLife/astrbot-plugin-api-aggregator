@@ -27,7 +27,7 @@ API Aggregator 是一个 AstrBot WebUI 插件，用于在插件页中集中管�
 1. 将本目录放入 AstrBot 的插件目录，目录名建议保持为 `astrbot-plugin-api-aggregator`。
 2. 重启 AstrBot 或在插件管理中重新加载插件。
 3. 打开 AstrBot WebUI 的插件页，进入 API Aggregator 面板。
-4. 添加 API 分组和 API 条目，使用 `Test` 或 `Test Enabled` 验证配置。
+4. 添加 API 分组和 API 条目，使用 `Test` 或 `Test Enabled APIs` 验证配置。
 
 插件要求：
 

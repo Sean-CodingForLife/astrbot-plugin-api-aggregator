@@ -375,6 +375,11 @@ select,
   overflow: hidden;
 }
 
+.main-panel[data-view="logs"],
+.main-panel[data-view="import"] {
+  align-self: start;
+}
+
 .is-hidden {
   display: none;
 }
@@ -661,15 +666,13 @@ pre {
   border: 0;
   background: var(--surface);
   padding: 16px;
+  max-height: 320px;
 }
 
 .import-layout {
   display: grid;
-  flex: 1;
-  min-height: 0;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: start;
   gap: 16px;
-  overflow: hidden;
   padding: 16px;
 }
 
@@ -717,11 +720,11 @@ pre {
 }
 
 .import-output {
-  min-height: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
   padding: 14px;
+  max-height: 320px;
 }
 
 dialog {
