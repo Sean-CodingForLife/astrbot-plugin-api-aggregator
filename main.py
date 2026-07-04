@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import random
@@ -11,10 +12,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import ProxyHandler, Request, build_opener
 
+import httpx
 from pydantic import Field as PydanticField
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from astrbot.api import AstrBotConfig, logger
@@ -36,6 +36,7 @@ TRIGGER_MATCH_MODES = {"contains", "exact", "command"}
 RESPONSE_TYPES = {"summary", "text", "image", "audio", "video"}
 LANGUAGE_MODES = {"auto", "zh-CN", "en-US"}
 PROXY_MODES = {"direct", "custom", "environment"}
+BODY_MODES = {"json", "raw", "form-data", "x-www-form-urlencoded"}
 RESPONSE_TRANSFORMS = {
     "raw",
     "string",
@@ -237,6 +238,10 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
                 "query": dict(item.get("query") or {}) if isinstance(item.get("query"), dict) else {},
                 "headers": dict(item.get("headers") or {}) if isinstance(item.get("headers"), dict) else {},
                 "body": str(item.get("body") or ""),
+                "body_mode": str(item.get("body_mode") or "json")
+                if str(item.get("body_mode") or "json") in BODY_MODES
+                else "json",
+                "body_form": dict(item.get("body_form") or {}) if isinstance(item.get("body_form"), dict) else {},
                 "priority": clamp_int(item.get("priority"), 100, 1, 1000),
                 "circuit_failures": max(0, int(item.get("circuit_failures") or 0)),
                 "circuit_open_until": max(0, int(item.get("circuit_open_until") or 0)),
@@ -546,6 +551,9 @@ def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None =
     method = str(payload.get("method", base.get("method", "GET")) or "GET").upper()
     if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
         raise ValueError("method must be GET, POST, PUT, PATCH, or DELETE")
+    body_mode = str(payload.get("body_mode", base.get("body_mode", "json")) or "json").strip()
+    if body_mode not in BODY_MODES:
+        raise ValueError("body_mode must be json, raw, form-data, or x-www-form-urlencoded")
     ts = now_ms()
     return {
         **base,
@@ -557,6 +565,8 @@ def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None =
         "query": pick_string_map(payload.get("query", base.get("query", {}))),
         "headers": pick_string_map(payload.get("headers", base.get("headers", {}))),
         "body": str(payload.get("body", base.get("body", "")) or ""),
+        "body_mode": body_mode,
+        "body_form": pick_string_map(payload.get("body_form", base.get("body_form", {}))),
         "priority": clamp_int(payload.get("priority", base.get("priority", 100)), 100, 1, 1000),
         "circuit_failures": max(0, int(base.get("circuit_failures") or 0)),
         "circuit_open_until": max(0, int(base.get("circuit_open_until") or 0)),
@@ -587,7 +597,7 @@ def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None =
     }
 
 
-def build_request(api: dict[str, Any], template_context: dict[str, Any] | None = None) -> Request:
+def build_request(api: dict[str, Any], template_context: dict[str, Any] | None = None) -> dict[str, Any]:
     context = build_template_context(api, template_context)
     url = render_template_string(api.get("url"), context).strip()
     query = render_string_map_templates(api.get("query"), context)
@@ -597,11 +607,63 @@ def build_request(api: dict[str, Any], template_context: dict[str, Any] | None =
         url = f"{url}{separator}{urlencode(query)}"
     method = str(api.get("method") or "GET").upper()
     body_text = render_template_string(api.get("body"), context, allow_json_value=True)
-    data = None
+    body_mode = str(api.get("body_mode") or "json").strip()
+    if body_mode not in BODY_MODES:
+        body_mode = "json"
+    body_form = render_string_map_templates(api.get("body_form"), context)
+    content: bytes | None = None
     if method in {"POST", "PUT", "PATCH", "DELETE"}:
-        data = body_text.encode("utf-8") if body_text else b""
-        headers.setdefault("Content-Type", "application/json; charset=utf-8")
-    return Request(url, data=data, headers=headers, method=method)
+        if body_mode == "raw":
+            content = body_text.encode("utf-8") if body_text else b""
+        elif body_mode == "x-www-form-urlencoded":
+            content = urlencode(body_form).encode("utf-8")
+            headers.setdefault("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+        elif body_mode == "form-data":
+            boundary = f"astrbot-api-aggregator-{uuid.uuid4().hex}"
+            chunks: list[bytes] = []
+            for key, value in body_form.items():
+                if isinstance(value, dict) and str(value.get("type") or "").strip() == "file":
+                    filename = str(value.get("filename") or "").strip()
+                    mime = str(value.get("content_type") or "").strip() or "application/octet-stream"
+                    encoded = str(value.get("data_base64") or "").strip()
+                    if not filename:
+                        raise ValueError(f"form-data file field {key} is missing filename")
+                    if not encoded:
+                        raise ValueError(f"form-data file field {key} is missing data_base64")
+                    chunks.extend(
+                        [
+                            f"--{boundary}\r\n".encode("utf-8"),
+                            (
+                                f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'
+                            ).encode("utf-8"),
+                            f"Content-Type: {mime}\r\n\r\n".encode("utf-8"),
+                            base64.b64decode(encoded),
+                            b"\r\n",
+                        ]
+                    )
+                    continue
+                chunks.extend(
+                    [
+                        f"--{boundary}\r\n".encode("utf-8"),
+                        f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode("utf-8"),
+                        str(value).encode("utf-8"),
+                        b"\r\n",
+                    ]
+                )
+            chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+            content = b"".join(chunks)
+            headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        else:
+            if body_text:
+                json.loads(body_text)
+            content = body_text.encode("utf-8") if body_text else b""
+            headers.setdefault("Content-Type", "application/json; charset=utf-8")
+    return {
+        "url": url,
+        "method": method,
+        "headers": headers,
+        "content": content,
+    }
 
 
 def normalize_proxy_url(value: Any) -> str:
@@ -630,17 +692,19 @@ def resolve_proxy_config(mode_value: Any, url_value: Any) -> tuple[str, str, str
     return proxy_mode, normalized_proxy_url, "custom", ""
 
 
-def open_request(req: Request, *, timeout: int, proxy_mode: str = "direct", proxy_url: str = ""):
+def build_httpx_client_kwargs(*, proxy_mode: str = "direct", proxy_url: str = "") -> dict[str, Any]:
     proxy_mode = normalize_proxy_mode(proxy_mode, proxy_url_value=proxy_url)
     if proxy_mode == "environment":
-        return build_opener(ProxyHandler()).open(req, timeout=timeout)
+        return {"trust_env": True}
     if proxy_mode == "direct":
-        return build_opener(ProxyHandler({})).open(req, timeout=timeout)
+        return {"trust_env": False}
     proxy_url = normalize_proxy_url(proxy_url)
     if not proxy_url:
-        return build_opener(ProxyHandler({})).open(req, timeout=timeout)
-    proxies = {"http": proxy_url, "https": proxy_url}
-    return build_opener(ProxyHandler(proxies)).open(req, timeout=timeout)
+        return {"trust_env": False}
+    return {
+        "trust_env": False,
+        "proxy": proxy_url,
+    }
 
 
 def _cooldown_remaining_ms(api: dict[str, Any]) -> int:
@@ -687,13 +751,12 @@ def _build_attempt_result(
 def classify_request_error(exc: Exception) -> str:
     if isinstance(exc, ValueError) and "template variable" in str(exc).lower():
         return "template_error"
-    if isinstance(exc, HTTPError):
+    if isinstance(exc, httpx.HTTPStatusError):
         return "http_error"
-    if isinstance(exc, TimeoutError):
+    if isinstance(exc, httpx.TimeoutException):
         return "timeout"
-    if isinstance(exc, URLError):
-        reason = str(getattr(exc, "reason", "") or exc)
-        lowered = reason.lower()
+    if isinstance(exc, (httpx.ProxyError, httpx.ConnectError, httpx.NetworkError)):
+        lowered = str(exc).lower()
         if "timed out" in lowered or "timeout" in lowered:
             return "timeout"
         if "ssl" in lowered or "handshake" in lowered:
@@ -701,6 +764,10 @@ def classify_request_error(exc: Exception) -> str:
         if "name or service not known" in lowered or "could not resolve" in lowered:
             return "dns_error"
         return "connection_error"
+    if isinstance(exc, httpx.InvalidURL):
+        return "invalid_url"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
     lowered = str(exc).lower()
     if "timed out" in lowered or "timeout" in lowered:
         return "timeout"
@@ -849,19 +916,23 @@ async def execute_api_request(
     )
     attempts: list[dict[str, Any]] = []
 
-    def run_once() -> dict[str, Any]:
+    async def run_once() -> dict[str, Any]:
         req = build_request(api, template_context)
-        with open_request(
-            req,
-            timeout=timeout_seconds,
-            proxy_mode=proxy_mode,
-            proxy_url=proxy_url,
-        ) as response:
-            raw = response.read(read_limit)
+        client_kwargs = build_httpx_client_kwargs(proxy_mode=proxy_mode, proxy_url=proxy_url)
+        timeout = httpx.Timeout(timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout, **client_kwargs) as client:
+            response = await client.request(
+                req["method"],
+                req["url"],
+                headers=req["headers"],
+                content=req["content"],
+            )
+            response.raise_for_status()
+            raw = response.content[:read_limit]
             content_type = str(response.headers.get("Content-Type", "") or "")
             payload = build_response_payload(content_type, raw)
             return {
-                "status": getattr(response, "status", None),
+                "status": response.status_code,
                 "content_type": content_type,
                 "body_kind": payload["body_kind"],
                 "body_data": payload["body_data"],
@@ -871,7 +942,7 @@ async def execute_api_request(
     for attempt in range(1, retry_count + 2):
         started = time.perf_counter()
         try:
-            result = await asyncio.to_thread(run_once)
+            result = await run_once()
             elapsed = int((time.perf_counter() - started) * 1000)
             attempts.append(
                 _build_attempt_result(
@@ -1329,7 +1400,7 @@ class ApiAggregatorCallTool(FunctionTool[AstrAgentContext]):
                 "strategy": {
                     "type": "string",
                     "description": "Aggregation strategy.",
-                    "enum": ["first-ok", "round-robin", "random"],
+                    "enum": ["first-ok", "round-robin", "random", "priority"],
                     "default": "first-ok",
                 },
                 "response_path": {
