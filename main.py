@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import os
 import random
@@ -37,8 +36,6 @@ TRIGGER_MATCH_MODES = {"contains", "exact", "command"}
 RESPONSE_TYPES = {"summary", "text", "image", "audio", "video"}
 LANGUAGE_MODES = {"auto", "zh-CN", "en-US"}
 PROXY_MODES = {"direct", "custom", "environment"}
-AUTH_TYPES = {"none", "bearer", "basic", "api-key"}
-API_KEY_IN_VALUES = {"header", "query"}
 RESPONSE_TRANSFORMS = {
     "raw",
     "string",
@@ -240,8 +237,6 @@ def normalize_data(raw: dict[str, Any]) -> dict[str, Any]:
                 "query": dict(item.get("query") or {}) if isinstance(item.get("query"), dict) else {},
                 "headers": dict(item.get("headers") or {}) if isinstance(item.get("headers"), dict) else {},
                 "body": str(item.get("body") or ""),
-                "auth_type": normalize_auth_type(item.get("auth_type")),
-                "auth_config": normalize_auth_config(item.get("auth_config")),
                 "priority": clamp_int(item.get("priority"), 100, 1, 1000),
                 "circuit_failures": max(0, int(item.get("circuit_failures") or 0)),
                 "circuit_open_until": max(0, int(item.get("circuit_open_until") or 0)),
@@ -368,31 +363,9 @@ def pick_template_vars(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def normalize_auth_type(value: Any) -> str:
-    auth_type = str(value or "none").strip().lower()
-    return auth_type if auth_type in AUTH_TYPES else "none"
-
-
-def normalize_api_key_in(value: Any) -> str:
-    location = str(value or "header").strip().lower()
-    return location if location in API_KEY_IN_VALUES else "header"
-
-
 def normalize_response_transform(value: Any) -> str:
     transform = str(value or "raw").strip().lower()
     return transform if transform in RESPONSE_TRANSFORMS else "raw"
-
-
-def normalize_auth_config(value: Any) -> dict[str, str]:
-    raw = value if isinstance(value, dict) else {}
-    return {
-        "token": str(raw.get("token") or ""),
-        "username": str(raw.get("username") or ""),
-        "password": str(raw.get("password") or ""),
-        "key_name": str(raw.get("key_name") or ""),
-        "key_value": str(raw.get("key_value") or ""),
-        "api_key_in": normalize_api_key_in(raw.get("api_key_in")),
-    }
 
 
 def resolve_data_path(source: Any, path: str) -> Any:
@@ -491,18 +464,6 @@ def render_string_map_templates(value: Any, context: dict[str, Any]) -> dict[str
     }
 
 
-def render_auth_config(value: Any, context: dict[str, Any]) -> dict[str, str]:
-    raw = normalize_auth_config(value)
-    return {
-        "token": render_template_string(raw.get("token"), context),
-        "username": render_template_string(raw.get("username"), context),
-        "password": render_template_string(raw.get("password"), context),
-        "key_name": render_template_string(raw.get("key_name"), context),
-        "key_value": render_template_string(raw.get("key_value"), context),
-        "api_key_in": normalize_api_key_in(raw.get("api_key_in")),
-    }
-
-
 def _event_scalar(value: Any) -> str:
     if value is None:
         return ""
@@ -596,8 +557,6 @@ def parse_api_payload(payload: dict[str, Any], existing: dict[str, Any] | None =
         "query": pick_string_map(payload.get("query", base.get("query", {}))),
         "headers": pick_string_map(payload.get("headers", base.get("headers", {}))),
         "body": str(payload.get("body", base.get("body", "")) or ""),
-        "auth_type": normalize_auth_type(payload.get("auth_type", base.get("auth_type", "none"))),
-        "auth_config": normalize_auth_config(payload.get("auth_config", base.get("auth_config", {}))),
         "priority": clamp_int(payload.get("priority", base.get("priority", 100)), 100, 1, 1000),
         "circuit_failures": max(0, int(base.get("circuit_failures") or 0)),
         "circuit_open_until": max(0, int(base.get("circuit_open_until") or 0)),
@@ -633,18 +592,6 @@ def build_request(api: dict[str, Any], template_context: dict[str, Any] | None =
     url = render_template_string(api.get("url"), context).strip()
     query = render_string_map_templates(api.get("query"), context)
     headers = render_string_map_templates(api.get("headers"), context)
-    auth_type = normalize_auth_type(api.get("auth_type"))
-    auth_config = render_auth_config(api.get("auth_config"), context)
-    if auth_type == "bearer" and auth_config.get("token"):
-        headers.setdefault("Authorization", f"Bearer {auth_config['token']}")
-    elif auth_type == "basic" and auth_config.get("username"):
-        user_pass = f"{auth_config['username']}:{auth_config.get('password', '')}".encode("utf-8")
-        headers.setdefault("Authorization", f"Basic {base64.b64encode(user_pass).decode('ascii')}")
-    elif auth_type == "api-key" and auth_config.get("key_name"):
-        if auth_config.get("api_key_in") == "query":
-            query.setdefault(auth_config["key_name"], auth_config.get("key_value", ""))
-        else:
-            headers.setdefault(auth_config["key_name"], auth_config.get("key_value", ""))
     if query:
         separator = "&" if "?" in url else "?"
         url = f"{url}{separator}{urlencode(query)}"

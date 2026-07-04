@@ -89,23 +89,10 @@ function applyTranslations() {
   setLabelText("apiName", "name");
   setLabelText("apiGroup", "group");
   setLabelText("apiMethod", "method");
-  setLabelText("apiAuthType", "authType");
-  setLabelText("apiAuthToken", "bearerToken");
-  setLabelText("apiAuthUsername", "basicUsername");
-  setLabelText("apiAuthPassword", "basicPassword");
-  setLabelText("apiAuthKeyName", "apiKeyName");
-  setLabelText("apiAuthKeyValue", "apiKeyValue");
-  setLabelText("apiAuthKeyIn", "apiKeyIn");
   setLabelText("apiQuery", "queryJson");
   setLabelText("apiHeaders", "headersJson");
   setLabelText("apiBody", "body");
   setLabelText("apiPriority", "priority");
-  setOptionText("apiAuthType", "none", "none");
-  setOptionText("apiAuthType", "bearer", "bearerToken");
-  setOptionText("apiAuthType", "basic", "basicAuth");
-  setOptionText("apiAuthType", "api-key", "apiKey");
-  setOptionText("apiAuthKeyIn", "header", "header");
-  setOptionText("apiAuthKeyIn", "query", "query");
   setLabelText("apiTimeoutSeconds", "timeoutSeconds");
   setLabelText("apiRetryCount", "retryCount");
   setLabelText("apiCooldownSeconds", "cooldownSeconds");
@@ -505,13 +492,6 @@ function openApiDialog(api = null) {
   $("apiGroup").value = api?.group_id || state.groups[0]?.id || "default";
   $("apiUrl").value = api?.url || "";
   $("apiMethod").value = api?.method || "GET";
-  $("apiAuthType").value = api?.auth_type || "none";
-  $("apiAuthToken").value = api?.auth_config?.token || "";
-  $("apiAuthUsername").value = api?.auth_config?.username || "";
-  $("apiAuthPassword").value = api?.auth_config?.password || "";
-  $("apiAuthKeyName").value = api?.auth_config?.key_name || "";
-  $("apiAuthKeyValue").value = api?.auth_config?.key_value || "";
-  $("apiAuthKeyIn").value = api?.auth_config?.api_key_in || "header";
   $("apiQuery").value = JSON.stringify(api?.query || {}, null, 2);
   $("apiHeaders").value = JSON.stringify(api?.headers || {}, null, 2);
   $("apiBody").value = api?.body || "";
@@ -564,15 +544,6 @@ async function saveApi(event) {
     group_id: $("apiGroup").value,
     url: $("apiUrl").value,
     method: $("apiMethod").value,
-    auth_type: $("apiAuthType").value,
-    auth_config: {
-      token: $("apiAuthToken").value,
-      username: $("apiAuthUsername").value,
-      password: $("apiAuthPassword").value,
-      key_name: $("apiAuthKeyName").value,
-      key_value: $("apiAuthKeyValue").value,
-      api_key_in: $("apiAuthKeyIn").value,
-    },
     query: parseJsonInput("apiQuery"),
     headers: parseJsonInput("apiHeaders"),
     body: $("apiBody").value,

@@ -7,7 +7,6 @@ API Aggregator 是一个 AstrBot WebUI 插件，用于在插件页中集中管�
 - 在 AstrBot 插件页管理 API、分组、启用状态和测试结果
 - 支持 GET、POST、PUT、PATCH、DELETE 请求
 - 支持 Query、Headers、Body、超时、重试和冷却时间配置
-- 支持 Bearer Token、Basic Auth、API Key 内建鉴权
 - 支持 `first-ok`、`round-robin`、`random`、`priority` 四种聚合策略
 - 支持通过 AstrBot 插件设置调整外部 API 响应读取上限
 - 支持消息触发器，匹配后自动调用 API 分组
@@ -64,7 +63,6 @@ API Aggregator 是一个 AstrBot WebUI 插件，用于在插件页中集中管�
 - Query JSON
 - Headers JSON
 - Body
-- Auth Type：`none` / `bearer` / `basic` / `api-key`
 - Priority：范围 `1-1000`，数值越小优先级越高
 - Timeout Seconds，范围 `1-120`
 - Retry Count，范围 `0-5`
